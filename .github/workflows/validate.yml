@@ -49,16 +49,15 @@ jobs:
       # stamp. Resolve the same configuration and fail on it.
       - name: Resolve the configuration
         env:
-          SUBSTITUTIONS: ${{ steps.stamp.outputs.substitutions }}
+          VERSION: ${{ steps.stamp.outputs.version }}
         run: |
-          sub_args=()
-          while IFS= read -r line; do
-            [[ -z "${line}" ]] && continue
-            sub_args+=(-s "${line%%=*}" "${line#*=}")
-          done <<< "${SUBSTITUTIONS}"
+          manifest_args=()
+          while IFS= read -r -d '' arg; do
+            manifest_args+=("${arg}")
+          done < <(python3 scripts/manifest_substitutions.py manifest.json --esphome-args)
           docker run --rm -v "$PWD":/config -w /config --user "$(id -u):$(id -g)" \
             --entrypoint esphome "ghcr.io/esphome/esphome:${ESPHOME_VERSION}" \
-            "${sub_args[@]}" config relay-node.yaml > resolved.yaml
+            -s version "${VERSION}" "${manifest_args[@]}" config relay-node.yaml > resolved.yaml
 
       - name: Guard the stamped version
         run: |

@@ -20,11 +20,17 @@ if [[ "${1:-}" == "--print-version" ]]; then
   exit 0
 fi
 
-args=(-s version "$version")
-while IFS= read -r line; do
-  [[ -z "$line" ]] && continue
-  args+=(-s "${line%%=*}" "${line#*=}")
-done < <(python3 scripts/manifest_substitutions.py manifest.json)
+# Read into a variable first: a process substitution would hide a manifest error from
+# `set -e`, and the flash would go ahead with the placeholders unexpanded.
+manifest_args=()
+while IFS= read -r -d '' arg; do
+  manifest_args+=("$arg")
+done < <(python3 scripts/manifest_substitutions.py manifest.json --esphome-args || echo FAILED >&2)
+
+if [[ ${#manifest_args[@]} -eq 0 ]]; then
+  echo "scripts/flash.sh: manifest.json produced no substitutions; refusing to flash" >&2
+  exit 1
+fi
 
 echo "Flashing relay-node.yaml as version: $version" >&2
-exec esphome "${args[@]}" run relay-node.yaml "$@"
+exec esphome -s version "$version" "${manifest_args[@]}" run relay-node.yaml "$@"

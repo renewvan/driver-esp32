@@ -8,7 +8,7 @@ empty are omitted, never emitted blank.
 Values are escaped for a C++ string literal (`\\` and `"`): ESPHome pastes substitutions
 textually, and the firmware places them between double quotes inside a lambda.
 
-usage: manifest_substitutions.py MANIFEST [--version VERSION]
+usage: manifest_substitutions.py MANIFEST [--esphome-args]
 """
 
 import argparse
@@ -40,7 +40,11 @@ def cpp_escape(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("manifest")
-    parser.add_argument("--version")
+    parser.add_argument(
+        "--esphome-args",
+        action="store_true",
+        help="emit NUL-separated `-s KEY VALUE` triples for `esphome` instead of key=value lines",
+    )
     args = parser.parse_args()
 
     with open(args.manifest, encoding="utf-8") as handle:
@@ -52,10 +56,12 @@ def main():
         print(f"{args.manifest}: {err}", file=sys.stderr)
         return 1
 
-    if args.version:
-        values["version"] = cpp_escape(args.version)
-    for key, value in values.items():
-        print(f"{key}={value}")
+    if args.esphome_args:
+        for key, value in values.items():
+            sys.stdout.write(f"-s\0{key}\0{value}\0")
+    else:
+        for key, value in values.items():
+            print(f"{key}={value}")
     return 0
 
 

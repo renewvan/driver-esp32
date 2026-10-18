@@ -73,6 +73,12 @@ scripts/flash.sh                       # first flash: connect via USB
 Always flash with `scripts/flash.sh`, not `esphome run relay-node.yaml` directly. The script
 stamps the firmware version from your checkout and merges `manifest.json` into the build, and
 passes any extra arguments through to `esphome run` (e.g. `scripts/flash.sh --device /dev/ttyUSB0`).
+
+A bare `esphome run relay-node.yaml` fails, on purpose: `manifest.json` is the only source of
+the node's identity (`node`, `product`, `source`, `publishes`), so `relay-node.yaml` does not
+declare them. ESPHome only warns about an undeclared substitution and would otherwise use the
+literal `${node}` as an MQTT topic.
+
 Subsequent updates can go over WiFi (run the script again once the node has joined your
 network) using the OTA password in `secrets.yaml`.
 

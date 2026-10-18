@@ -81,9 +81,33 @@ class ManifestSubstitutions(unittest.TestCase):
         result = run({**FULL, "homepage": "https://example.com/?a=b"})
         self.assertEqual(lines(result)["homepage"], "https://example.com/?a=b")
 
-    def test_version_argument_is_appended(self):
-        result = run(FULL, "--version", "v0.2.0-3-gabc1234-dirty")
-        self.assertEqual(lines(result)["version"], "v0.2.0-3-gabc1234-dirty")
+    def test_esphome_args_mode_emits_nul_separated_dash_s_triples(self):
+        # What `esphome -s KEY VALUE ...` needs, so flash.sh and CI share one translation.
+        result = run(FULL, "--esphome-args")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tokens = result.stdout.split("\0")[:-1]
+        self.assertEqual(tokens[0::3], ["-s"] * (len(tokens) // 3))
+        self.assertEqual(
+            dict(zip(tokens[1::3], tokens[2::3])),
+            {
+                "node": "relay",
+                "product": "Relay node",
+                "source": "8-channel relay board",
+                "publishes": '[\\"relay\\"]',
+                "manufacturer": "renewvan",
+                "homepage": "https://github.com/renewvan/node-relay",
+            },
+        )
+
+    def test_esphome_args_mode_keeps_a_value_with_spaces_and_equals_as_one_token(self):
+        result = run({**FULL, "source": "a b=c"}, "--esphome-args")
+        tokens = result.stdout.split("\0")[:-1]
+        self.assertEqual(dict(zip(tokens[1::3], tokens[2::3]))["source"], "a b=c")
+
+    def test_esphome_args_mode_still_rejects_an_invalid_manifest(self):
+        result = run({**FULL, "version": "9.9.9"}, "--esphome-args")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
 
     def test_manifest_that_carries_a_version_is_rejected(self):
         # The version comes only from the checkout; a hand-written one must not slip through.
