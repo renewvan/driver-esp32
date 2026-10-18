@@ -6,14 +6,62 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  # Pinned: the action defaults to `latest`, which would change under us.
+  ESPHOME_VERSION: "2026.9.1"
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      - name: Unit tests for the build scripts
+        run: python3 -m unittest discover -s tests -v
+
       - name: Fake secrets for config validation
         run: cp secrets.yaml.example secrets.yaml
-      - uses: esphome/build-action@v6
+
+      # The CI version is deliberately not a real release: nothing built here is flashed.
+      - name: Compose the CI version and the manifest substitutions
+        id: stamp
+        run: |
+          version="ci-${GITHUB_SHA::7}"
+          {
+            echo "version=${version}"
+            echo "substitutions<<EOF"
+            echo "version=${version}"
+            python3 scripts/manifest_substitutions.py manifest.json
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # Pinned by commit SHA (v8.1.0). v6 had no `substitutions` input.
+      - name: Build
+        id: build
+        uses: esphome/build-action@ae5408cdbc4f70692bf8e345c4982bca05a93667 # v8.1.0
         with:
           yaml-file: relay-node.yaml
-          version: latest
+          version: ${{ env.ESPHOME_VERSION }}
+          substitutions: ${{ steps.stamp.outputs.substitutions }}
+
+      # `esphome config` only warns on an undeclared substitution and exits 0, leaving the
+      # literal placeholder in the configuration, so the build alone cannot catch a dropped
+      # stamp. Resolve the same configuration and fail on it.
+      - name: Resolve the configuration
+        env:
+          SUBSTITUTIONS: ${{ steps.stamp.outputs.substitutions }}
+        run: |
+          sub_args=()
+          while IFS= read -r line; do
+            [[ -z "${line}" ]] && continue
+            sub_args+=(-s "${line%%=*}" "${line#*=}")
+          done <<< "${SUBSTITUTIONS}"
+          docker run --rm -v "$PWD":/config -w /config --user "$(id -u):$(id -g)" \
+            --entrypoint esphome "ghcr.io/esphome/esphome:${ESPHOME_VERSION}" \
+            "${sub_args[@]}" config relay-node.yaml > resolved.yaml
+
+      - name: Guard the stamped version
+        run: |
+          python3 scripts/check_resolved_config.py resolved.yaml \
+            --expected-version "${{ steps.stamp.outputs.version }}" \
+            --reported-version "${{ steps.build.outputs.project-version }}"

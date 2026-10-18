@@ -67,12 +67,62 @@ change only if your board is wired differently.
 ```bash
 pip install esphome
 cp secrets.yaml.example secrets.yaml   # fill in your WiFi/MQTT/OTA values
-esphome run relay-node.yaml            # first flash: connect via USB
+scripts/flash.sh                       # first flash: connect via USB
 ```
 
-Subsequent updates can go over WiFi (`esphome run relay-node.yaml`
-again, once the node has joined your network) using the OTA password
-in `secrets.yaml`.
+Always flash with `scripts/flash.sh`, not `esphome run relay-node.yaml` directly. The script
+stamps the firmware version from your checkout and merges `manifest.json` into the build, and
+passes any extra arguments through to `esphome run` (e.g. `scripts/flash.sh --device /dev/ttyUSB0`).
+Subsequent updates can go over WiFi (run the script again once the node has joined your
+network) using the OTA password in `secrets.yaml`.
+
+## Version stamp
+
+The firmware version is `git describe --tags --always --dirty` of the checkout you flash from,
+and the flash script **always** passes it to the build:
+
+| Checkout                             | Stamped version     |
+| ------------------------------------ | ------------------- |
+| exactly on tag `v0.2.0`              | `v0.2.0`            |
+| 3 commits past `v0.2.0`              | `v0.2.0-3-gabc1234` |
+| no tags at all                       | `abc1234`           |
+| uncommitted changes to tracked files | `...-dirty`         |
+
+An untagged tree still flashes, with a hash version; the script never refuses. Editing channel
+labels does not require tagging first. `scripts/flash.sh --print-version` prints the stamp
+without building.
+
+The firmware itself defaults the version to `dev` (`substitutions.version` in
+`relay-node.yaml`). **Keep that default.** ESPHome only warns about an undeclared substitution
+and then ships the literal `${version}` as the version, so without a default a missing build
+argument would silently publish a placeholder. CI additionally fails if the stamp is lost.
+
+**Releases are git tags.** There is no `version` file and no release workflow; tag the commit
+(`git tag v0.2.0`) and flash from it. There is also no attached binary: a CI-built binary
+contains placeholder secrets and cannot be flashed onto a van.
+
+## Node info and health
+
+The relay appears on the dashboard's Device page like every other Node. On every MQTT connect
+it publishes, in this order:
+
+1. retained Node info to `renewvan/relay/info` (JSON: `node`, `product`, `source`, `publishes`,
+   optional `manufacturer` and `homepage`, `version`, and `host_serial`)
+2. retained `online` to `renewvan/relay/health`
+
+The last-will and shutdown messages publish `offline` to the health topic; the info stays
+retained, so the dashboard can show "offline, last seen vX". `host_serial` is the board's MAC in
+the form `AA:BB:CC:DD:EE:FF`, so it can be compared with the label on the board.
+
+The static fields live in `manifest.json`, the single source. It must not contain `version` or
+`host_serial`. Optional fields (`manufacturer`, `homepage`) are omitted from the info when empty.
+`scripts/manifest_substitutions.py` turns it into the build's substitutions, for both the flash
+script and CI.
+
+The built-in MQTT birth message is disabled, and the connect handler waits for the client to be
+connected before publishing (a publish made earlier is silently dropped). If a publish is
+dropped after that wait, the previous retained info, possibly a stale version, stays until the
+next reconnect.
 
 ## Verifying
 
@@ -82,13 +132,28 @@ in `secrets.yaml`.
 2. Reconnect to the renewvan bus, press a button, and confirm
    `renewvan/relay/<id>/state` publishes `"true"`/`"false"` (retained) —
    e.g. `mosquitto_sub -h <broker> -t 'renewvan/relay/#' -v`.
+3. Watch `mosquitto_sub -h <broker> -v 'renewvan/relay/#'` while the board boots: `info` must
+   appear **before** `online`, with the MAC in `AA:BB:CC:DD:EE:FF` form.
+4. Unplug the board's network: `renewvan/relay/health` becomes `offline` and the retained `info`
+   stays.
 
 ## CI
 
-`.github/workflows/validate.yml` runs `esphome config`/compile
-validation (via `esphome/build-action`) against a placeholder
-`secrets.yaml` on every push/PR — catches YAML/pin/config errors
-without needing real hardware. There's no versioned image to publish
-for this repo (it's flashed once per node, not a compose service) —
-`hub`'s deployment manifest references this repo's own flash
-instructions, not a pinned image.
+`.github/workflows/validate.yml` runs the script tests, then builds `relay-node.yaml` with
+`esphome/build-action` (pinned by commit SHA, with ESPHome pinned) against the placeholder
+`secrets.yaml.example`. It passes a CI version (`ci-<short sha>`) and the manifest as
+substitutions, then fails if:
+
+- the action's reported project version differs from the CI value, or
+- the resolved configuration (`esphome config`) still contains an unexpanded `$placeholder`.
+
+The second check exists because ESPHome exits 0 on an undeclared substitution.
+
+There is no release workflow and no versioned image to publish: the relay is flashed once per
+node from the owner's checkout, and `hub`'s deployment manifest references this repo's flash
+instructions.
+
+> **Two different `manifest.json` files.** The build action also writes its own `manifest.json`
+> (an ESP Web Tools manifest) into its output folder, named after the device. That is unrelated
+> to the `manifest.json` at this repo's root, which describes the Node. The root one is the
+> source of the Node info; the action's is a build artifact and is not used here.

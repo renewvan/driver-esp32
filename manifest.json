@@ -1,0 +1,8 @@
+{
+  "node": "relay",
+  "product": "Relay node",
+  "source": "8-channel relay board",
+  "publishes": ["relay"],
+  "manufacturer": "renewvan",
+  "homepage": "https://github.com/renewvan/node-relay"
+}

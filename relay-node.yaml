@@ -37,12 +37,32 @@
 # per channel to match your actual install's load labels — see
 # README.md "Customizing channels".
 
+# Static Node fields (node, product, source, publishes, and the optional manufacturer and
+# homepage) come ONLY from manifest.json, merged in as substitutions by
+# scripts/manifest_substitutions.py; scripts/flash.sh and CI both call it. They are
+# deliberately not declared here, so there is one source and a build that skips the
+# manifest fails the guard on the unexpanded placeholder instead of publishing a copy.
+#
+# The optional fields are omitted from the manifest when empty, so they are declared here
+# as empty and left out of the published info.
+#
+# `version` is stamped from the checkout by scripts/flash.sh. KEEP the `dev` default:
+# ESPHome only warns on an undeclared substitution and ships the literal "${version}"
+# otherwise, so removing it turns a missing build argument into a silent bad version.
 substitutions:
   node_name: renewvan-relay
+  version: dev
+  manufacturer: ""
+  homepage: ""
 
 esphome:
   name: ${node_name}
   friendly_name: RenewVan Relay Node
+  # Exposes the stamped version as esphome.project.version so the CI build action
+  # reports it (`project-version` output) and the guard can compare it.
+  project:
+    name: renewvan.node-relay
+    version: ${version}
 
 esp32:
   board: esp32dev
@@ -76,12 +96,55 @@ api:
 
 # The van bus — same Mosquitto every other node publishes to.
 # discovery: false: no Home Assistant autodiscovery in the v0 stack.
+#
+# Node info/health (renewvan/<node>/info, renewvan/<node>/health), see on_connect below:
+# - The built-in birth message is disabled (`birth_message:` empty). ESPHome would send
+#   it from loop(), after on_connect, so `online` could land before the info.
+# - The last-will and shutdown messages publish `offline` on the health topic.
+# - on_connect fires on the transport callback, BEFORE the client reports connected,
+#   and mqtt.publish silently drops anything sent while not connected. So the handler
+#   waits for mqtt.connected, publishes retained info, then retained `online`.
+# - Info is republished on every reconnect, so a broker that lost retained state heals.
+#   Recorded cost: a publish dropped after the wait leaves the previous retained info
+#   (possibly a stale version) until the next reconnect.
 mqtt:
   broker: !secret mqtt_broker
   port: !secret mqtt_port
   username: !secret mqtt_username
   password: !secret mqtt_password
   discovery: false
+  birth_message:
+  will_message:
+    topic: renewvan/${node}/health
+    payload: offline
+    retain: true
+  shutdown_message:
+    topic: renewvan/${node}/health
+    payload: offline
+    retain: true
+  on_connect:
+    - wait_until:
+        mqtt.connected:
+    - mqtt.publish:
+        topic: renewvan/${node}/info
+        retain: true
+        payload: !lambda |-
+          json::JsonBuilder builder;
+          JsonObject root = builder.root();
+          root["node"] = "${node}";
+          root["product"] = "${product}";
+          root["source"] = "${source}";
+          // `publishes` is a JSON array literal from manifest.json.
+          root["publishes"] = serialized(std::string("${publishes}"));
+          if (std::string("${manufacturer}") != "") root["manufacturer"] = "${manufacturer}";
+          if (std::string("${homepage}") != "") root["homepage"] = "${homepage}";
+          root["version"] = "${version}";
+          root["host_serial"] = get_mac_address_pretty();
+          return builder.serialize();
+    - mqtt.publish:
+        topic: renewvan/${node}/health
+        payload: online
+        retain: true
 
 # --- Channel 1: lights_ceiling -------------------------------------------
 switch:
