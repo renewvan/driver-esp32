@@ -63,6 +63,10 @@ subscribe: publishers must not retain commands.
   fallback access point.
 - **Interlocks live in hardware**, never in this firmware: a pump dry-run cutoff, a heater thermal
   cutoff. The node and the bus do no interlock logic.
+- **WiFi power save is off** (`power_save_mode: NONE`). ESPHome's default `LIGHT` made the radio
+  sleep between beacons: measured on the board, ping was 55 ms to 3.6 s with 4 of 10 lost, so a
+  `set` regularly took longer than the dashboard's 4 second give-up. With it off, ping is about
+  7 ms and a `set` latches in about 40 ms.
 - **A rename can be lost for up to 60 seconds** after a crash or power cut (ESPHome's flash write
   interval); a rename survives an OTA.
 

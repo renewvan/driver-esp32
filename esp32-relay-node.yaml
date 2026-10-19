@@ -40,7 +40,7 @@ substitutions:
 
 esphome:
   name: ${node_name}
-  friendly_name: RenewVan ESP32 Relay Node
+  friendly_name: Renewvan ESP32 Relay Node
   # Exposes the stamped version as esphome.project.version so the CI build action
   # reports it (`project-version` output) and the guard can compare it.
   project:
@@ -57,6 +57,11 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  # NONE, not ESPHome's default LIGHT: with power save the radio sleeps between beacons and an
+  # inbound `set` waits for the next wake. Measured on the board: ping 55 ms to 3.6 s, 4 of 10
+  # lost, so a command regularly took longer than the dashboard's 4 second give-up. This board is
+  # mains powered, so the extra draw costs nothing.
+  power_save_mode: NONE
 
   # Fallback AP for initial/recovery config if the configured network is unreachable.
   ap:
@@ -145,7 +150,10 @@ mqtt:
         };
         for (const Channel &c : channels) {
           std::string base = std::string("renewvan/relay/") + c.id;
-          id(mqtt_client).publish(base + "/state", c.sw->state ? "true" : "false", 0, true);
+          // An explicit std::string: a const char* here binds the (topic, payload, length, qos)
+          // overload, which sent an empty, unretained payload.
+          const std::string state = c.sw->state ? "true" : "false";
+          id(mqtt_client).publish(base + "/state", state, 0, true);
           if (!c.name->empty()) {
             JsonDocument doc;
             doc.set(*c.name);
