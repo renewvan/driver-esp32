@@ -1,66 +1,105 @@
-# node-relay
+# node-esp32-relay
 
-ESPHome YAML config for the 8-channel switched-load relay node (lights,
-fan, USB outlets, etc.) — no custom firmware. Per
-`hub/.scratch/renewvan-hub-v0-build/issues/03-esp32-relay-node-config.md`
-and the interface decision in
-`hub/.scratch/renewvan-hub-v0/issues/03-esp32-relay-node-driver-interface.md`.
+ESPHome YAML config for the 16-channel switched-load relay node (lights, a water pump, a fridge,
+a heater, an inverter enable) on an ESP32-WROOM with two chained SN74HC595 shift registers. No
+custom firmware. Named for its host and board, not its source: see
+[ADR 0012](https://github.com/renewvan/hub/blob/main/docs/adr/0012-board-named-relay-node.md). The wire
+contract is
+[ADR 0013](https://github.com/renewvan/hub/blob/main/docs/adr/0013-writable-relay-and-its-wire-contract.md)
+and `schema/relay.schema.json` in `renewvan/hub`.
+
+The node key is `esp32-relay`, so it publishes `renewvan/esp32-relay/info` and
+`renewvan/esp32-relay/health`. The name `node-relay` is deliberately left free for a later
+Pi-wired node.
 
 ## Hardware
 
-Bare ESP32 dev board + a separate 8-channel relay board wired to ESP32
-GPIO (not an integrated relay+MCU board — keeps switching decoupled
-from the hub's own lifecycle). Each channel also has a physical
-momentary/toggle button wired to its own GPIO input (pulled up
-internally, switched to GND when pressed).
+ESP32-WROOM and two chained SN74HC595 shift registers driving sixteen relay outputs.
 
-| Channel | Default id        | Relay GPIO | Button GPIO |
-| ------- | ----------------- | ---------- | ----------- |
-| 1       | `lights_ceiling`  | GPIO4      | GPIO14      |
-| 2       | `lights_reading`  | GPIO5      | GPIO15      |
-| 3       | `lights_kitchen`  | GPIO13     | GPIO21      |
-| 4       | `lights_bathroom` | GPIO16     | GPIO22      |
-| 5       | `lights_awning`   | GPIO17     | GPIO25      |
-| 6       | `fan_vent`        | GPIO18     | GPIO26      |
-| 7       | `usb_outlets`     | GPIO19     | GPIO27      |
-| 8       | `aux_1`           | GPIO23     | GPIO32      |
+| Signal               | GPIO   | Note                                                                |
+| -------------------- | ------ | ------------------------------------------------------------------- |
+| Data (`SER`)         | GPIO14 |                                                                     |
+| Clock (`SRCLK`)      | GPIO13 |                                                                     |
+| Latch (`RCLK`)       | GPIO12 | Strapping pin. **No external pull-up** (GPIO12 high selects 1.8 V). |
+| Output enable (`OE`) | GPIO5  | Strapping pin. External pull-up **required**, see below.            |
 
-## Switching path — fully local, no MQTT command topic
+Channel `relay_01` is shift-register output 0 (`QA` of the register wired to the ESP32 data line)
+and `relay_16` is output 15. The chain order is read from the ESPHome source, not from the wiring;
+confirm it on the bench.
 
-Each channel pairs a `binary_sensor` (button) with a `switch` (relay
-output): `on_press` on the button directly calls `switch.toggle` on the
-paired relay, entirely on-device. This automation runs regardless of
-WiFi/MQTT connectivity — physical buttons keep working even with the
-Pi, dashboard, or broker down. There is no MQTT command topic for
-relays in v0 (read-only dashboard, no tap-to-toggle); nothing subscribes
-to control a relay remotely.
+## Wire contract
 
-## Renewvan bus MQTT interface
+Per channel `relay_01` to `relay_16`:
 
-Every relay is `internal: true` (no Home Assistant/ESPHome-API
-frontend, no discovery — `mqtt: { discovery: false }` too). Its only
-MQTT presence is an explicit `mqtt.publish` in `on_turn_on`/
-`on_turn_off`, which publishes retained `"true"`/`"false"` directly to
-`renewvan/relay/<id>/state` on every state change — matching the v0.1
-`relay.schema.json` boolean `state` field.
+| Topic                          | Retained | Payload                                                     |
+| ------------------------------ | -------- | ----------------------------------------------------------- |
+| `renewvan/relay/<id>/state`    | yes      | JSON `true` / `false`, published after the output changed   |
+| `renewvan/relay/<id>/name`     | yes      | JSON string, only once a name has been set                  |
+| `renewvan/relay/<id>/set`      | no       | JSON `true` or `false` only. There is no toggle.            |
+| `renewvan/relay/<id>/name/set` | no       | JSON string, 1 to 63 bytes (bytes, so non-ASCII is shorter) |
 
-(ESPHome's built-in `payload_on`/`payload_off` switch options — as
-described in the ticket 03 decision doc — turned out not to exist on
-ESPHome's actual `MQTT Component` base config; only `state_topic`/
-`command_topic` do, and those still emit ESPHome's native `"ON"`/`"OFF"`
-strings, not `"true"`/`"false"`. Explicit `mqtt.publish` actions produce
-the exact same wire behavior the ticket specifies — retained `"true"`/
-`"false"` on `renewvan/relay/<id>/state` on every change — via a documented
-ESPHome mechanism instead of a nonexistent config key.)
+`state` means the output was commanded and latched. It does **not** mean the load is energised: with
+no feedback sensor a stuck relay or a blown fuse is not detected.
+
+A `set` with any other payload is ignored and logged. A `name/set` that is not a JSON string, is
+empty, or is over 63 bytes is ignored and logged: the retained `name` is then unchanged, so a consumer
+keeps showing the stored name. A consumer must tolerate a `set` or `name/set` being ignored; there is
+no ack.
+
+`set` and `name/set` are described here and in the schema description, not as separate schema files.
+ESPHome cannot tell a retained command from a live one, so a retained `set` would be applied at every
+subscribe: publishers must not retain commands.
+
+### Boot and failure behaviour
+
+- **Every channel is off after any restart** (reset, brownout, update, crash). No state is restored.
+  The node alone owns boot state; the hub never re-asserts a desired state.
+- **Relays hold their last state while WiFi or the broker is down.** There is no firmware
+  timeout-to-off and no local control. A manual override is a hardware concern.
+- **A `set` published while the node was offline is not replayed on reconnect** (`clean_session`).
+- **No `api:` block**, so ESPHome's fifteen-minute no-client reboot cannot flip a load. **No
+  `web_server:`**: it would be an unauthenticated second control path that bypasses this contract.
+  The captive-portal fallback adds an OTA upload endpoint that is only reachable on the node's own
+  fallback access point.
+- **Interlocks live in hardware**, never in this firmware: a pump dry-run cutoff, a heater thermal
+  cutoff. The node and the bus do no interlock logic.
+- **A rename can be lost for up to 60 seconds** after a crash or power cut (ESPHome's flash write
+  interval); a rename survives an OTA.
+
+On every MQTT connect, in one chain, the node publishes (1) all sixteen retained states (and the
+retained name of every channel that has one), then (2) its retained Node info, then (3) retained
+`online`. So a consumer that sees `online` never finds a stale "on" for a load that is off, and info
+stays immediately before `online` (ADR 0011). The last-will and shutdown messages publish `offline`;
+a will carries one topic, so it cannot clear sixteen state topics: **a consumer treats `state` as
+unknown whenever this Node's health is not `online`.**
+
+If a publish is dropped after the connect wait, the previous retained value, possibly stale, stays
+until the next reconnect.
+
+## Required: the output-enable pull-up
+
+ESPHome drives nothing before `setup()`, and runs 32 shift cycles at boot, so a glitch on the outputs
+exists whatever the restore mode. An **external pull-up on `OE` (GPIO5)** keeps the shift register
+outputs high-impedance until firmware drives it. Which pull-up is correct depends on the relay
+board's polarity (active-low or active-high); check the board before fitting. Fitting it is an
+acceptance step, below.
 
 ## Customizing channels
 
-The 8 channel labels above (`lights_ceiling`, etc.) are placeholders —
-rename them to match your actual van's loads. For each channel, update
-all three of: the `switch.id`, its `mqtt.publish` topic string (both
-`on_turn_on` and `on_turn_off`), and the `switch.toggle:` target in the
-paired button's `on_press`. GPIO pin assignments are physical wiring —
-change only if your board is wired differently.
+Sixteen channels, one line each in `esp32-relay-node.yaml` under `packages:`:
+
+```yaml
+relay_03: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_03, bit: 2 } }
+```
+
+`ch` is the id on the bus and `bit` is the shift-register output 0 to 15. ESPHome rejects a `bit`
+above 15, a duplicate `bit` and a duplicate `ch`; it does not notice a skipped `bit`. Labels are not
+set here: publish a `name/set` (the dashboard's Settings does this), and the name is stored on the
+board. Changing a channel's `ch` orphans its stored name.
+
+The connect chain in `esp32-relay-node.yaml` lists every `ch` once, so the sixteen states are
+published in one ordered chain. Keep the two in step if you add or rename a channel; CI fails on a
+mismatch.
 
 ## Flashing
 
@@ -70,22 +109,22 @@ cp secrets.yaml.example secrets.yaml   # fill in your WiFi/MQTT/OTA values
 scripts/flash.sh                       # first flash: connect via USB
 ```
 
-Always flash with `scripts/flash.sh`, not `esphome run relay-node.yaml` directly. The script
+Always flash with `scripts/flash.sh`, not `esphome run esp32-relay-node.yaml` directly. The script
 stamps the firmware version from your checkout and merges `manifest.json` into the build, and
 passes any extra arguments through to `esphome run` (e.g. `scripts/flash.sh --device /dev/ttyUSB0`).
 
-A bare `esphome run relay-node.yaml` fails, on purpose: `manifest.json` is the only source of
-the node's identity (`node`, `product`, `source`, `publishes`), so `relay-node.yaml` does not
-declare them. ESPHome only warns about an undeclared substitution and would otherwise use the
-literal `${node}` as an MQTT topic.
+A bare `esphome run esp32-relay-node.yaml` fails, on purpose: `manifest.json` is the only source of
+the node's identity (`node`, `product`, `source`, `publishes`), so the YAML does not declare them.
+ESPHome only warns about an undeclared substitution and would otherwise use the literal `${node}` as
+an MQTT topic.
 
-Subsequent updates can go over WiFi (run the script again once the node has joined your
-network) using the OTA password in `secrets.yaml`.
+Subsequent updates can go over WiFi (run the script again once the node has joined your network)
+using the OTA password in `secrets.yaml`.
 
 ## Version stamp
 
-The firmware version is `git describe --tags --always --dirty` of the checkout you flash from,
-and the flash script **always** passes it to the build:
+The firmware version is `git describe --tags --always --dirty` of the checkout you flash from, and
+the flash script **always** passes it to the build:
 
 | Checkout                             | Stamped version     |
 | ------------------------------------ | ------------------- |
@@ -94,72 +133,61 @@ and the flash script **always** passes it to the build:
 | no tags at all                       | `abc1234`           |
 | uncommitted changes to tracked files | `...-dirty`         |
 
-An untagged tree still flashes, with a hash version; the script never refuses. Editing channel
-labels does not require tagging first. `scripts/flash.sh --print-version` prints the stamp
-without building.
+An untagged tree still flashes, with a hash version; the script never refuses.
+`scripts/flash.sh --print-version` prints the stamp without building.
 
 The firmware itself defaults the version to `dev` (`substitutions.version` in
-`relay-node.yaml`). **Keep that default.** ESPHome only warns about an undeclared substitution
-and then ships the literal `${version}` as the version, so without a default a missing build
-argument would silently publish a placeholder. CI additionally fails if the stamp is lost.
+`esp32-relay-node.yaml`). **Keep that default.** ESPHome only warns about an undeclared substitution
+and then ships the literal `${version}` as the version, so without a default a missing build argument
+would silently publish a placeholder. CI additionally fails if the stamp is lost.
 
 **Releases are git tags.** There is no `version` file and no release workflow; tag the commit
-(`git tag v0.2.0`) and flash from it. There is also no attached binary: a CI-built binary
-contains placeholder secrets and cannot be flashed onto a van.
+(`git tag v0.2.0`) and flash from it. There is also no attached binary: a CI-built binary contains
+placeholder secrets and cannot be flashed onto a van.
 
 ## Node info and health
 
-The relay appears on the dashboard's Device page like every other Node. On every MQTT connect
-it publishes, in this order:
-
-1. retained Node info to `renewvan/relay/info` (JSON: `node`, `product`, `source`, `publishes`,
-   optional `manufacturer` and `homepage`, `version`, and `host_serial`)
-2. retained `online` to `renewvan/relay/health`
-
-The last-will and shutdown messages publish `offline` to the health topic; the info stays
-retained, so the dashboard can show "offline, last seen vX". `host_serial` is the board's MAC in
-the form `AA:BB:CC:DD:EE:FF`, so it can be compared with the label on the board.
-
-The static fields live in `manifest.json`, the single source. It must not contain `version` or
-`host_serial`. Optional fields (`manufacturer`, `homepage`) are omitted from the info when empty.
+The node appears on the dashboard's Device page like every other Node. The static fields live in
+`manifest.json`, the single source. It must not contain `version` or `host_serial`. Optional fields
+(`manufacturer`, `homepage`) are omitted from the info when empty.
 `scripts/manifest_substitutions.py` turns it into the build's substitutions, for both the flash
-script and CI.
+script and CI. `host_serial` is the board's MAC in the form `AA:BB:CC:DD:EE:FF`, so it can be
+compared with the label on the board.
 
-The built-in MQTT birth message is disabled, and the connect handler waits for the client to be
-connected before publishing (a publish made earlier is silently dropped). If a publish is
-dropped after that wait, the previous retained info, possibly a stale version, stays until the
-next reconnect.
+## Acceptance (on the board, before it goes in the van)
 
-## Verifying
+CI validates the YAML and the version stamp. Nothing in CI can exercise the board, so these are
+manual:
 
-1. With the ESP32 flashed and powered, physically disconnect it from
-   WiFi/the renewvan bus (or just don't configure `wifi_ssid` yet) — confirm
-   each physical button still toggles its relay.
-2. Reconnect to the renewvan bus, press a button, and confirm
-   `renewvan/relay/<id>/state` publishes `"true"`/`"false"` (retained) —
-   e.g. `mosquitto_sub -h <broker> -t 'renewvan/relay/#' -v`.
-3. Watch `mosquitto_sub -h <broker> -v 'renewvan/relay/#'` while the board boots: `info` must
-   appear **before** `online`, with the MAC in `AA:BB:CC:DD:EE:FF` form.
-4. Unplug the board's network: `renewvan/relay/health` becomes `offline` and the retained `info`
-   stays.
+1. **Bench test across 20 or more resets with the `OE` pull-up fitted:** no channel clicks on
+   during boot. Repeat across an OTA update and a pulled power lead.
+2. Confirm there is **no fifteen-minute reboot** with no client connected.
+3. Watch `mosquitto_sub -h <broker> -v 'renewvan/#'` while the board boots: the sixteen `state`
+   topics, then `renewvan/esp32-relay/info`, then `renewvan/esp32-relay/health` = `online`.
+4. `mosquitto_pub -t renewvan/relay/relay_01/set -m true` switches channel 1 and `state` becomes
+   `true` afterwards; `-m false` switches it off.
+5. Publish `'"Water pump"'` to `renewvan/relay/relay_03/name/set` and confirm the retained `name`;
+   power-cycle after 60 seconds and confirm it persists.
+6. Unplug the board's network: `health` becomes `offline`, the retained `info` stays, and the relays
+   hold their state.
 
 ## CI
 
-`.github/workflows/validate.yml` runs the script tests, then builds `relay-node.yaml` with
+`.github/workflows/validate.yml` runs the script tests, then builds `esp32-relay-node.yaml` with
 `esphome/build-action` (pinned by commit SHA, with ESPHome pinned) against the placeholder
-`secrets.yaml.example`. It passes a CI version (`ci-<short sha>`) and the manifest as
-substitutions, then fails if:
+`secrets.yaml.example`. It passes a CI version (`ci-<short sha>`) and the manifest as substitutions,
+then fails if:
 
 - the action's reported project version differs from the CI value, or
-- the resolved configuration (`esphome config`) still contains an unexpanded `$placeholder`.
+- the resolved configuration (`esphome config`) still contains an unexpanded `$placeholder`, or
+- the connect chain and the `packages:` list name different channels.
 
-The second check exists because ESPHome exits 0 on an undeclared substitution.
+The placeholder check exists because ESPHome exits 0 on an undeclared substitution.
 
-There is no release workflow and no versioned image to publish: the relay is flashed once per
-node from the owner's checkout, and `hub`'s deployment manifest references this repo's flash
-instructions.
+There is no release workflow and no versioned image to publish: the node is flashed once per board
+from the owner's checkout, and `hub`'s deployment manifest references this repo's flash instructions.
 
-> **Two different `manifest.json` files.** The build action also writes its own `manifest.json`
-> (an ESP Web Tools manifest) into its output folder, named after the device. That is unrelated
-> to the `manifest.json` at this repo's root, which describes the Node. The root one is the
-> source of the Node info; the action's is a build artifact and is not used here.
+> **Two different `manifest.json` files.** The build action also writes its own `manifest.json` (an
+> ESP Web Tools manifest) into its output folder, named after the device. That is unrelated to the
+> `manifest.json` at this repo's root, which describes the Node. The root one is the source of the
+> Node info; the action's is a build artifact and is not used here.

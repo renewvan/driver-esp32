@@ -1,5 +1,5 @@
 # Per renewvan/hub's docs/adr/0007-per-language-formatting-linting-convention.md
-# "config-only repos" case: no application code here (relay-node.yaml is
+# "config-only repos" case: no application code here (esp32-relay-node.yaml is
 # ESPHome config, flashed once, not a program this repo builds/tests), so
 # Prettier formatting is all there is -- no linter to add.
 #

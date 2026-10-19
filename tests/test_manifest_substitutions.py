@@ -13,12 +13,12 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "manifest_substitutions.py"
 
 FULL = {
-    "node": "relay",
-    "product": "Relay node",
-    "source": "8-channel relay board",
+    "node": "esp32-relay",
+    "product": "ESP32 16-channel relay board",
+    "source": "ESP32 with two chained SN74HC595 shift registers",
     "publishes": ["relay"],
     "manufacturer": "renewvan",
-    "homepage": "https://github.com/renewvan/node-relay",
+    "homepage": "https://github.com/renewvan/node-esp32-relay",
 }
 
 
@@ -44,12 +44,12 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             lines(result),
             {
-                "node": "relay",
-                "product": "Relay node",
-                "source": "8-channel relay board",
+                "node": "esp32-relay",
+                "product": "ESP32 16-channel relay board",
+                "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
                 "manufacturer": "renewvan",
-                "homepage": "https://github.com/renewvan/node-relay",
+                "homepage": "https://github.com/renewvan/node-esp32-relay",
             },
         )
 
@@ -90,12 +90,12 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             dict(zip(tokens[1::3], tokens[2::3])),
             {
-                "node": "relay",
-                "product": "Relay node",
-                "source": "8-channel relay board",
+                "node": "esp32-relay",
+                "product": "ESP32 16-channel relay board",
+                "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
                 "manufacturer": "renewvan",
-                "homepage": "https://github.com/renewvan/node-relay",
+                "homepage": "https://github.com/renewvan/node-esp32-relay",
             },
         )
 
@@ -132,6 +132,17 @@ class ManifestSubstitutions(unittest.TestCase):
         result = run({**FULL, "publishes": []})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("publishes", result.stderr)
+
+    def test_the_repos_own_manifest_flattens_to_the_renamed_node(self):
+        manifest = SCRIPT.parent.parent / "manifest.json"
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), str(manifest)], capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = lines(result)
+        self.assertEqual(values["node"], "esp32-relay")
+        self.assertEqual(values["publishes"], '[\\"relay\\"]')
+        self.assertEqual(values["homepage"], "https://github.com/renewvan/node-esp32-relay")
 
 
 if __name__ == "__main__":

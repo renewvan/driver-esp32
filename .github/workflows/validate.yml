@@ -19,6 +19,9 @@ jobs:
       - name: Unit tests for the build scripts
         run: python3 -m unittest discover -s tests -v
 
+      - name: Guard the channel list
+        run: python3 scripts/check_channels.py esp32-relay-node.yaml
+
       - name: Fake secrets for config validation
         run: cp secrets.yaml.example secrets.yaml
 
@@ -40,7 +43,7 @@ jobs:
         id: build
         uses: esphome/build-action@ae5408cdbc4f70692bf8e345c4982bca05a93667 # v8.1.0
         with:
-          yaml-file: relay-node.yaml
+          yaml-file: esp32-relay-node.yaml
           version: ${{ env.ESPHOME_VERSION }}
           substitutions: ${{ steps.stamp.outputs.substitutions }}
 
@@ -57,7 +60,7 @@ jobs:
           done < <(python3 scripts/manifest_substitutions.py manifest.json --esphome-args)
           docker run --rm -v "$PWD":/config -w /config --user "$(id -u):$(id -g)" \
             --entrypoint esphome "ghcr.io/esphome/esphome:${ESPHOME_VERSION}" \
-            -s version "${VERSION}" "${manifest_args[@]}" config relay-node.yaml > resolved.yaml
+            -s version "${VERSION}" "${manifest_args[@]}" config esp32-relay-node.yaml > resolved.yaml
 
       - name: Guard the stamped version
         run: |

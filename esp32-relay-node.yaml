@@ -1,0 +1,200 @@
+# node-esp32-relay: 16-channel switched-load relay node (ESP32-WROOM + two chained SN74HC595).
+#
+# The wire contract is docs/adr/0013-writable-relay-and-its-wire-contract.md in renewvan/hub
+# and schema/relay.schema.json. In short, per channel `relay_01` .. `relay_16`:
+#   renewvan/relay/<id>/state     retained JSON true/false, published AFTER the output changed
+#   renewvan/relay/<id>/name      retained JSON string, optional (the only label on the wire)
+#   renewvan/relay/<id>/set       unretained JSON true / false (no toggle)
+#   renewvan/relay/<id>/name/set  unretained JSON string, 1..63 bytes
+#
+# Safety, by design (see the ADR):
+#   * Every channel is OFF after any reset, brownout, update or crash (restore_mode ALWAYS_OFF).
+#   * Relays HOLD their last state while WiFi or the broker is down: no timeout-to-off, no
+#     local control. A manual override and any interlock (pump dry-run, heater thermal cutoff)
+#     are hardware concerns, never this firmware's.
+#   * No `api:` block: ESPHome reboots a node with no API client every 15 minutes, and a
+#     reboot is a real fault on this board. No `web_server:` either: it would be an
+#     unauthenticated second control path that bypasses the bus contract.
+#   * clean_session: a `set` published while the node was offline is not replayed on reconnect.
+#   * An external pull-up on the shift register's output-enable pin (GPIO5) is REQUIRED so the
+#     outputs stay high-impedance until firmware drives it. ESPHome drives nothing before
+#     setup(), so a glitch exists whatever the restore mode. See README.md, "Bench test".
+#
+# Static Node fields (node, product, source, publishes, and the optional manufacturer and
+# homepage) come ONLY from manifest.json, merged in as substitutions by
+# scripts/manifest_substitutions.py; scripts/flash.sh and CI both call it. They are
+# deliberately not declared here, so there is one source and a build that skips the
+# manifest fails the guard on the unexpanded placeholder instead of publishing a copy.
+#
+# The optional fields are omitted from the manifest when empty, so they are declared here
+# as empty and left out of the published info.
+#
+# `version` is stamped from the checkout by scripts/flash.sh. KEEP the `dev` default:
+# ESPHome only warns on an undeclared substitution and ships the literal "${version}"
+# otherwise, so removing it turns a missing build argument into a silent bad version.
+substitutions:
+  node_name: renewvan-esp32-relay
+  version: dev
+  manufacturer: ""
+  homepage: ""
+
+esphome:
+  name: ${node_name}
+  friendly_name: RenewVan ESP32 Relay Node
+  # Exposes the stamped version as esphome.project.version so the CI build action
+  # reports it (`project-version` output) and the guard can compare it.
+  project:
+    name: renewvan.node-esp32-relay
+    version: ${version}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# WiFi/OTA credentials are install-specific, never committed. Copy secrets.yaml.example to
+# secrets.yaml (gitignored) and fill in your own values.
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Fallback AP for initial/recovery config if the configured network is unreachable.
+  ap:
+    ssid: "${node_name} Fallback"
+    password: !secret wifi_ap_fallback_password
+
+captive_portal:
+
+logger:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# Two chained SN74HC595: pins 0-7 on the register whose SER is the ESP32 data line, 8-15 on
+# the second. GPIO5 (oe_pin) and GPIO12 (latch) are strapping pins; the warning is
+# acknowledged. Do NOT add a pull-up on the latch net (GPIO12 high selects 1.8 V flash).
+sn74hc595:
+  - id: hc595
+    data_pin: GPIO14
+    clock_pin: GPIO13
+    latch_pin: { number: GPIO12, ignore_strapping_warning: true }
+    oe_pin: { number: GPIO5, ignore_strapping_warning: true }
+    sr_count: 2
+
+# The van bus, the same Mosquitto every other node publishes to.
+#
+# Node info/health (renewvan/<node>/info, renewvan/<node>/health):
+# - topic_prefix: null drops ESPHome's own <node>/status, <node>/debug and discovery topics.
+# - discover_ip: false drops the esphome/discover and esphome/ping subscriptions.
+# - The built-in birth message is disabled (`birth_message:` empty). ESPHome would send
+#   it from loop(), after on_connect, so `online` could land before the state and info.
+# - The last-will and shutdown messages publish `offline` on the health topic. A will
+#   carries one topic, so it cannot clear sixteen state topics: a consumer treats `state`
+#   as unknown whenever this Node's health is not `online`.
+# - on_connect fires on the transport callback, BEFORE the client reports connected,
+#   and mqtt.publish silently drops anything sent while not connected. So the handler
+#   waits for mqtt.connected first.
+# - ONE connect chain, in this order: (1) all sixteen retained states, (2) retained Node
+#   info, (3) retained `online`. A consumer that sees `online` therefore never finds a stale
+#   "on" for a load that is off, and info stays immediately before `online` (ADR 0011). The
+#   sixteen states are inside this one chain because the order of separate on_connect
+#   entries is undefined.
+mqtt:
+  id: mqtt_client
+  broker: !secret mqtt_broker
+  port: !secret mqtt_port
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  discovery: false
+  topic_prefix: null
+  discover_ip: false
+  clean_session: true
+  birth_message:
+  will_message:
+    topic: renewvan/${node}/health
+    payload: offline
+    retain: true
+  shutdown_message:
+    topic: renewvan/${node}/health
+    payload: offline
+    retain: true
+  on_connect:
+    - wait_until:
+        mqtt.connected:
+    # (1) every channel's retained state, and its retained name when it has one.
+    - lambda: |-
+        struct Channel { const char *id; switch_::Switch *sw; std::string *name; };
+        const Channel channels[] = {
+          {"relay_01", id(relay_relay_01), &id(name_relay_01)},
+          {"relay_02", id(relay_relay_02), &id(name_relay_02)},
+          {"relay_03", id(relay_relay_03), &id(name_relay_03)},
+          {"relay_04", id(relay_relay_04), &id(name_relay_04)},
+          {"relay_05", id(relay_relay_05), &id(name_relay_05)},
+          {"relay_06", id(relay_relay_06), &id(name_relay_06)},
+          {"relay_07", id(relay_relay_07), &id(name_relay_07)},
+          {"relay_08", id(relay_relay_08), &id(name_relay_08)},
+          {"relay_09", id(relay_relay_09), &id(name_relay_09)},
+          {"relay_10", id(relay_relay_10), &id(name_relay_10)},
+          {"relay_11", id(relay_relay_11), &id(name_relay_11)},
+          {"relay_12", id(relay_relay_12), &id(name_relay_12)},
+          {"relay_13", id(relay_relay_13), &id(name_relay_13)},
+          {"relay_14", id(relay_relay_14), &id(name_relay_14)},
+          {"relay_15", id(relay_relay_15), &id(name_relay_15)},
+          {"relay_16", id(relay_relay_16), &id(name_relay_16)},
+        };
+        for (const Channel &c : channels) {
+          std::string base = std::string("renewvan/relay/") + c.id;
+          id(mqtt_client).publish(base + "/state", c.sw->state ? "true" : "false", 0, true);
+          if (!c.name->empty()) {
+            JsonDocument doc;
+            doc.set(*c.name);
+            std::string payload;
+            serializeJson(doc, payload);
+            id(mqtt_client).publish(base + "/name", payload, 0, true);
+          }
+        }
+    # (2) retained Node info.
+    - mqtt.publish:
+        topic: renewvan/${node}/info
+        retain: true
+        payload: !lambda |-
+          json::JsonBuilder builder;
+          JsonObject root = builder.root();
+          root["node"] = "${node}";
+          root["product"] = "${product}";
+          root["source"] = "${source}";
+          // `publishes` is a JSON array literal from manifest.json.
+          root["publishes"] = serialized(std::string("${publishes}"));
+          if (std::string("${manufacturer}") != "") root["manufacturer"] = "${manufacturer}";
+          if (std::string("${homepage}") != "") root["homepage"] = "${homepage}";
+          root["version"] = "${version}";
+          root["host_serial"] = get_mac_address_pretty();
+          return builder.serialize();
+    # (3) retained online, last.
+    - mqtt.publish:
+        topic: renewvan/${node}/health
+        payload: online
+        retain: true
+
+# Sixteen channels, one line each. Adding or renaming one is a one-line change: `ch` is the id
+# on the bus (and in the topics), `bit` is the shift-register output 0..15. ESPHome rejects a
+# `bit` above 15, a duplicate `bit` and a duplicate `ch`; it does not notice a skipped `bit`.
+# The connect chain above lists every `ch`: keep the two in step when adding a channel.
+packages:
+  relay_01: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_01, bit: 0 } }
+  relay_02: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_02, bit: 1 } }
+  relay_03: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_03, bit: 2 } }
+  relay_04: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_04, bit: 3 } }
+  relay_05: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_05, bit: 4 } }
+  relay_06: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_06, bit: 5 } }
+  relay_07: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_07, bit: 6 } }
+  relay_08: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_08, bit: 7 } }
+  relay_09: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_09, bit: 8 } }
+  relay_10: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_10, bit: 9 } }
+  relay_11: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_11, bit: 10 } }
+  relay_12: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_12, bit: 11 } }
+  relay_13: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_13, bit: 12 } }
+  relay_14: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_14, bit: 13 } }
+  relay_15: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_15, bit: 14 } }
+  relay_16: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_16, bit: 15 } }
