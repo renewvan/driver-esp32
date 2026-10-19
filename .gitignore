@@ -2,3 +2,5 @@
 .esphome/
 *.bin
 __pycache__/
+secrets.yaml.*
+!secrets.yaml.example
