@@ -27,6 +27,9 @@ jobs:
   release:
     permissions:
       contents: write
+      # Not used by kind: firmware, but GitHub validates the whole called workflow up front and
+      # its publish-image job requests packages: write; a caller that grants less fails to start.
+      packages: write
     uses: renewvan/hub/.github/workflows/release.yml@eb9ad8a4b29519bbbd1c33b1092cdb7719628ec9
     with:
       kind: firmware
