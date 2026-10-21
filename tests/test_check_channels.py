@@ -1,4 +1,4 @@
-"""Seam: esp32-relay-node.yaml text -> pass/fail verdict on channel agreement.
+"""Seam: esp32-relay-driver.yaml text -> pass/fail verdict on channel agreement.
 
 A channel listed under `packages:` but missing from the connect chain would never publish
 its retained state, and `esphome config` would not notice. Observed through the script's
@@ -28,7 +28,7 @@ def channel_yaml(package_ids, chain_ids):
 
 def check(text):
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "node.yaml"
+        path = Path(tmp) / "device.yaml"
         path.write_text(text)
         return subprocess.run(
             [sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True
@@ -58,9 +58,9 @@ class CheckChannels(unittest.TestCase):
         result = check(channel_yaml(ids, list(reversed(ids))))
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_the_repos_own_node_file_passes(self):
+    def test_the_repos_own_board_file_passes(self):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), str(ROOT / "esp32-relay-node.yaml")],
+            [sys.executable, str(SCRIPT), str(ROOT / "esp32-relay-driver.yaml")],
             capture_output=True,
             text=True,
         )

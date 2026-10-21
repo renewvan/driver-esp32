@@ -13,12 +13,12 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "manifest_substitutions.py"
 
 FULL = {
-    "node": "esp32-relay",
+    "device": "esp32-relay",
     "product": "ESP32 16-channel relay board",
     "source": "ESP32 with two chained SN74HC595 shift registers",
     "publishes": ["relay"],
     "manufacturer": "renewvan",
-    "homepage": "https://github.com/renewvan/node-esp32-relay",
+    "homepage": "https://github.com/renewvan/driver-esp32-relay",
 }
 
 
@@ -44,24 +44,24 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             lines(result),
             {
-                "node": "esp32-relay",
+                "device": "esp32-relay",
                 "product": "ESP32 16-channel relay board",
                 "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
                 "manufacturer": "renewvan",
-                "homepage": "https://github.com/renewvan/node-esp32-relay",
+                "homepage": "https://github.com/renewvan/driver-esp32-relay",
             },
         )
 
     def test_empty_optional_fields_are_omitted_not_blank(self):
         minimal = {k: v for k, v in FULL.items() if k not in ("manufacturer", "homepage")}
         self.assertEqual(
-            set(lines(run(minimal))), {"node", "product", "source", "publishes"}
+            set(lines(run(minimal))), {"device", "product", "source", "publishes"}
         )
 
         blank = {**FULL, "manufacturer": "", "homepage": ""}
         self.assertEqual(
-            set(lines(run(blank))), {"node", "product", "source", "publishes"}
+            set(lines(run(blank))), {"device", "product", "source", "publishes"}
         )
 
     def test_publishes_decodes_back_to_the_json_array_for_multiple_types(self):
@@ -90,12 +90,12 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             dict(zip(tokens[1::3], tokens[2::3])),
             {
-                "node": "esp32-relay",
+                "device": "esp32-relay",
                 "product": "ESP32 16-channel relay board",
                 "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
                 "manufacturer": "renewvan",
-                "homepage": "https://github.com/renewvan/node-esp32-relay",
+                "homepage": "https://github.com/renewvan/driver-esp32-relay",
             },
         )
 
@@ -115,13 +115,13 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("version", result.stderr)
 
-    def test_manifest_that_carries_host_serial_is_rejected(self):
-        result = run({**FULL, "host_serial": "AA:BB:CC:DD:EE:FF"})
+    def test_manifest_that_carries_board_serial_is_rejected(self):
+        result = run({**FULL, "board_serial": "AA:BB:CC:DD:EE:FF"})
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("host_serial", result.stderr)
+        self.assertIn("board_serial", result.stderr)
 
     def test_missing_required_field_is_rejected(self):
-        for field in ("node", "product", "source", "publishes"):
+        for field in ("device", "product", "source", "publishes"):
             with self.subTest(field=field):
                 broken = {k: v for k, v in FULL.items() if k != field}
                 result = run(broken)
@@ -133,16 +133,16 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("publishes", result.stderr)
 
-    def test_the_repos_own_manifest_flattens_to_the_renamed_node(self):
+    def test_the_repos_own_manifest_flattens_to_the_renamed_device(self):
         manifest = SCRIPT.parent.parent / "manifest.json"
         result = subprocess.run(
             [sys.executable, str(SCRIPT), str(manifest)], capture_output=True, text=True
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         values = lines(result)
-        self.assertEqual(values["node"], "esp32-relay")
+        self.assertEqual(values["device"], "esp32-relay")
         self.assertEqual(values["publishes"], '[\\"relay\\"]')
-        self.assertEqual(values["homepage"], "https://github.com/renewvan/node-esp32-relay")
+        self.assertEqual(values["homepage"], "https://github.com/renewvan/driver-esp32-relay")
 
 
 if __name__ == "__main__":

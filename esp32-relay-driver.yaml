@@ -1,4 +1,4 @@
-# node-esp32-relay: 16-channel switched-load relay node (ESP32-WROOM + two chained SN74HC595).
+# driver-esp32-relay: 16-channel switched-load relay device (ESP32-WROOM + two chained SN74HC595).
 #
 # The wire contract is docs/adr/0013-writable-relay-and-its-wire-contract.md in renewvan/hub
 # and schema/relay.schema.json. In short, per channel `relay_01` .. `relay_16`:
@@ -12,15 +12,15 @@
 #   * Relays HOLD their last state while WiFi or the broker is down: no timeout-to-off, no
 #     local control. A manual override and any interlock (pump dry-run, heater thermal cutoff)
 #     are hardware concerns, never this firmware's.
-#   * No `api:` block: ESPHome reboots a node with no API client every 15 minutes, and a
+#   * No `api:` block: ESPHome reboots a device with no API client every 15 minutes, and a
 #     reboot is a real fault on this board. No `web_server:` either: it would be an
 #     unauthenticated second control path that bypasses the bus contract.
-#   * clean_session: a `set` published while the node was offline is not replayed on reconnect.
+#   * clean_session: a `set` published while the device was offline is not replayed on reconnect.
 #   * An external pull-up on the shift register's output-enable pin (GPIO5) is REQUIRED so the
 #     outputs stay high-impedance until firmware drives it. ESPHome drives nothing before
 #     setup(), so a glitch exists whatever the restore mode. See README.md, "Bench test".
 #
-# Static Node fields (node, product, source, publishes, and the optional manufacturer and
+# Static Device fields (device, product, source, publishes, and the optional manufacturer and
 # homepage) come ONLY from manifest.json, merged in as substitutions by
 # scripts/manifest_substitutions.py; scripts/flash.sh and CI both call it. They are
 # deliberately not declared here, so there is one source and a build that skips the
@@ -33,18 +33,18 @@
 # ESPHome only warns on an undeclared substitution and ships the literal "${version}"
 # otherwise, so removing it turns a missing build argument into a silent bad version.
 substitutions:
-  node_name: renewvan-esp32-relay
+  device_name: renewvan-esp32-relay
   version: dev
   manufacturer: ""
   homepage: ""
 
 esphome:
-  name: ${node_name}
-  friendly_name: Renewvan ESP32 Relay Node
+  name: ${device_name}
+  friendly_name: Renewvan ESP32 Relay Device
   # Exposes the stamped version as esphome.project.version so the CI build action
   # reports it (`project-version` output) and the guard can compare it.
   project:
-    name: renewvan.node-esp32-relay
+    name: renewvan.driver-esp32-relay
     version: ${version}
 
 esp32:
@@ -65,7 +65,7 @@ wifi:
 
   # Fallback AP for initial/recovery config if the configured network is unreachable.
   ap:
-    ssid: "${node_name} Fallback"
+    ssid: "${device_name} Fallback"
     password: !secret wifi_ap_fallback_password
 
 captive_portal:
@@ -87,20 +87,20 @@ sn74hc595:
     oe_pin: { number: GPIO5, ignore_strapping_warning: true }
     sr_count: 2
 
-# The van bus, the same Mosquitto every other node publishes to.
+# The van bus, the same Mosquitto every other device publishes to.
 #
-# Node info/health (renewvan/<node>/info, renewvan/<node>/health):
-# - topic_prefix: null drops ESPHome's own <node>/status, <node>/debug and discovery topics.
+# Device info/health (renewvan/<device>/info, renewvan/<device>/health):
+# - topic_prefix: null drops ESPHome's own <device>/status, <device>/debug and discovery topics.
 # - discover_ip: false drops the esphome/discover and esphome/ping subscriptions.
 # - The built-in birth message is disabled (`birth_message:` empty). ESPHome would send
 #   it from loop(), after on_connect, so `online` could land before the state and info.
 # - The last-will and shutdown messages publish `offline` on the health topic. A will
 #   carries one topic, so it cannot clear sixteen state topics: a consumer treats `state`
-#   as unknown whenever this Node's health is not `online`.
+#   as unknown whenever this Device's health is not `online`.
 # - on_connect fires on the transport callback, BEFORE the client reports connected,
 #   and mqtt.publish silently drops anything sent while not connected. So the handler
 #   waits for mqtt.connected first.
-# - ONE connect chain, in this order: (1) all sixteen retained states, (2) retained Node
+# - ONE connect chain, in this order: (1) all sixteen retained states, (2) retained Device
 #   info, (3) retained `online`. A consumer that sees `online` therefore never finds a stale
 #   "on" for a load that is off, and info stays immediately before `online` (ADR 0011). The
 #   sixteen states are inside this one chain because the order of separate on_connect
@@ -117,11 +117,11 @@ mqtt:
   clean_session: true
   birth_message:
   will_message:
-    topic: renewvan/${node}/health
+    topic: renewvan/${device}/health
     payload: offline
     retain: true
   shutdown_message:
-    topic: renewvan/${node}/health
+    topic: renewvan/${device}/health
     payload: offline
     retain: true
   on_connect:
@@ -162,14 +162,14 @@ mqtt:
             id(mqtt_client).publish(base + "/name", payload, 0, true);
           }
         }
-    # (2) retained Node info.
+    # (2) retained Device info.
     - mqtt.publish:
-        topic: renewvan/${node}/info
+        topic: renewvan/${device}/info
         retain: true
         payload: !lambda |-
           json::JsonBuilder builder;
           JsonObject root = builder.root();
-          root["node"] = "${node}";
+          root["device"] = "${device}";
           root["product"] = "${product}";
           root["source"] = "${source}";
           // `publishes` is a JSON array literal from manifest.json.
@@ -177,11 +177,11 @@ mqtt:
           if (std::string("${manufacturer}") != "") root["manufacturer"] = "${manufacturer}";
           if (std::string("${homepage}") != "") root["homepage"] = "${homepage}";
           root["version"] = "${version}";
-          root["host_serial"] = get_mac_address_pretty();
+          root["board_serial"] = get_mac_address_pretty();
           return builder.serialize();
     # (3) retained online, last.
     - mqtt.publish:
-        topic: renewvan/${node}/health
+        topic: renewvan/${device}/health
         payload: online
         retain: true
 

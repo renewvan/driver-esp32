@@ -6,7 +6,7 @@ on_connect entries is undefined), which lists every channel by hand. A channel p
 `packages:` but missing from that chain would never publish its state, and `esphome config`
 would not notice.
 
-usage: check_channels.py esp32-relay-node.yaml
+usage: check_channels.py esp32-relay-driver.yaml
 """
 
 import re

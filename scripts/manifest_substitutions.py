@@ -2,7 +2,7 @@
 """Flatten manifest.json into `key=value` lines for ESPHome substitutions.
 
 Used by scripts/flash.sh (esphome -s) and CI (build-action `substitutions:`), so the
-static Node fields have exactly one source: manifest.json. Optional fields that are
+static Device fields have exactly one source: manifest.json. Optional fields that are
 empty are omitted, never emitted blank.
 
 Values are escaped for a C++ string literal (`\\` and `"`): ESPHome pastes substitutions
@@ -15,10 +15,10 @@ import argparse
 import json
 import sys
 
-REQUIRED = ("node", "product", "source", "publishes")
+REQUIRED = ("device", "product", "source", "publishes")
 OPTIONAL = ("manufacturer", "homepage")
 # Stamped from the checkout / read from the board, never hand-written.
-FORBIDDEN = ("version", "host_serial")
+FORBIDDEN = ("version", "board_serial")
 
 
 def flatten(manifest):

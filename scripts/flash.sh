@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build and flash the ESP32 relay node, stamping the firmware version from this checkout.
+# Build and flash the ESP32 relay device, stamping the firmware version from this checkout.
 #
 # The version is `git describe --tags --always --dirty`, and it is ALWAYS passed to the
 # build. An untagged tree flashes with a hash version and an uncommitted tree gets a
-# `-dirty` suffix; this script never refuses. The static Node fields come from
+# `-dirty` suffix; this script never refuses. The static Device fields come from
 # manifest.json (scripts/manifest_substitutions.py), so they cannot drift from CI.
 #
 # usage: scripts/flash.sh [esphome run args...]   e.g. scripts/flash.sh --device /dev/ttyUSB0
@@ -32,5 +32,5 @@ if [[ ${#manifest_args[@]} -eq 0 ]]; then
   exit 1
 fi
 
-echo "Flashing esp32-relay-node.yaml as version: $version" >&2
-exec esphome -s version "$version" "${manifest_args[@]}" run esp32-relay-node.yaml "$@"
+echo "Flashing esp32-relay-driver.yaml as version: $version" >&2
+exec esphome -s version "$version" "${manifest_args[@]}" run esp32-relay-driver.yaml "$@"

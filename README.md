@@ -1,16 +1,16 @@
-# node-esp32-relay
+# driver-esp32-relay
 
-ESPHome YAML config for the 16-channel switched-load relay node (lights, a water pump, a fridge,
+ESPHome YAML config for the 16-channel switched-load relay device (lights, a water pump, a fridge,
 a heater, an inverter enable) on an ESP32-WROOM with two chained SN74HC595 shift registers. No
-custom firmware. Named for its host and board, not its source: see
+custom firmware. Named for its board, not its source: see
 [ADR 0012](https://github.com/renewvan/hub/blob/main/docs/adr/0012-board-named-relay-node.md). The wire
 contract is
 [ADR 0013](https://github.com/renewvan/hub/blob/main/docs/adr/0013-writable-relay-and-its-wire-contract.md)
 and `schema/relay.schema.json` in `renewvan/hub`.
 
-The node key is `esp32-relay`, so it publishes `renewvan/esp32-relay/info` and
-`renewvan/esp32-relay/health`. The name `node-relay` is deliberately left free for a later
-Pi-wired node.
+The device key is `esp32-relay`, so it publishes `renewvan/esp32-relay/info` and
+`renewvan/esp32-relay/health`. The name `driver-relay` is deliberately left free for a later
+Pi-wired device.
 
 ## Hardware
 
@@ -53,16 +53,16 @@ subscribe: publishers must not retain commands.
 ### Boot and failure behaviour
 
 - **Every channel is off after any restart** (reset, brownout, update, crash). No state is restored.
-  The node alone owns boot state; the hub never re-asserts a desired state.
+  The device alone owns boot state; the hub never re-asserts a desired state.
 - **Relays hold their last state while WiFi or the broker is down.** There is no firmware
   timeout-to-off and no local control. A manual override is a hardware concern.
-- **A `set` published while the node was offline is not replayed on reconnect** (`clean_session`).
+- **A `set` published while the device was offline is not replayed on reconnect** (`clean_session`).
 - **No `api:` block**, so ESPHome's fifteen-minute no-client reboot cannot flip a load. **No
   `web_server:`**: it would be an unauthenticated second control path that bypasses this contract.
-  The captive-portal fallback adds an OTA upload endpoint that is only reachable on the node's own
+  The captive-portal fallback adds an OTA upload endpoint that is only reachable on the device's own
   fallback access point.
 - **Interlocks live in hardware**, never in this firmware: a pump dry-run cutoff, a heater thermal
-  cutoff. The node and the bus do no interlock logic.
+  cutoff. The device and the bus do no interlock logic.
 - **WiFi power save is off** (`power_save_mode: NONE`). ESPHome's default `LIGHT` made the radio
   sleep between beacons: measured on the board, ping was 55 ms to 3.6 s with 4 of 10 lost, so a
   `set` regularly took longer than the dashboard's 4 second give-up. With it off, ping is about
@@ -70,12 +70,12 @@ subscribe: publishers must not retain commands.
 - **A rename can be lost for up to 60 seconds** after a crash or power cut (ESPHome's flash write
   interval); a rename survives an OTA.
 
-On every MQTT connect, in one chain, the node publishes (1) all sixteen retained states (and the
-retained name of every channel that has one), then (2) its retained Node info, then (3) retained
+On every MQTT connect, in one chain, the device publishes (1) all sixteen retained states (and the
+retained name of every channel that has one), then (2) its retained Device info, then (3) retained
 `online`. So a consumer that sees `online` never finds a stale "on" for a load that is off, and info
 stays immediately before `online` (ADR 0011). The last-will and shutdown messages publish `offline`;
 a will carries one topic, so it cannot clear sixteen state topics: **a consumer treats `state` as
-unknown whenever this Node's health is not `online`.**
+unknown whenever this Device's health is not `online`.**
 
 If a publish is dropped after the connect wait, the previous retained value, possibly stale, stays
 until the next reconnect.
@@ -90,7 +90,7 @@ acceptance step, below.
 
 ## Customizing channels
 
-Sixteen channels, one line each in `esp32-relay-node.yaml` under `packages:`:
+Sixteen channels, one line each in `esp32-relay-driver.yaml` under `packages:`:
 
 ```yaml
 relay_03: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_03, bit: 2 } }
@@ -101,7 +101,7 @@ above 15, a duplicate `bit` and a duplicate `ch`; it does not notice a skipped `
 set here: publish a `name/set` (the dashboard's Settings does this), and the name is stored on the
 board. Changing a channel's `ch` orphans its stored name.
 
-The connect chain in `esp32-relay-node.yaml` lists every `ch` once, so the sixteen states are
+The connect chain in `esp32-relay-driver.yaml` lists every `ch` once, so the sixteen states are
 published in one ordered chain. Keep the two in step if you add or rename a channel; CI fails on a
 mismatch.
 
@@ -113,16 +113,16 @@ cp secrets.yaml.example secrets.yaml   # fill in your WiFi/MQTT/OTA values
 scripts/flash.sh                       # first flash: connect via USB
 ```
 
-Always flash with `scripts/flash.sh`, not `esphome run esp32-relay-node.yaml` directly. The script
+Always flash with `scripts/flash.sh`, not `esphome run esp32-relay-driver.yaml` directly. The script
 stamps the firmware version from your checkout and merges `manifest.json` into the build, and
 passes any extra arguments through to `esphome run` (e.g. `scripts/flash.sh --device /dev/ttyUSB0`).
 
-A bare `esphome run esp32-relay-node.yaml` fails, on purpose: `manifest.json` is the only source of
-the node's identity (`node`, `product`, `source`, `publishes`), so the YAML does not declare them.
-ESPHome only warns about an undeclared substitution and would otherwise use the literal `${node}` as
+A bare `esphome run esp32-relay-driver.yaml` fails, on purpose: `manifest.json` is the only source of
+the device's identity (`device`, `product`, `source`, `publishes`), so the YAML does not declare them.
+ESPHome only warns about an undeclared substitution and would otherwise use the literal `${device}` as
 an MQTT topic.
 
-Subsequent updates can go over WiFi (run the script again once the node has joined your network)
+Subsequent updates can go over WiFi (run the script again once the device has joined your network)
 using the OTA password in `secrets.yaml`.
 
 ## Version stamp
@@ -141,7 +141,7 @@ An untagged tree still flashes, with a hash version; the script never refuses.
 `scripts/flash.sh --print-version` prints the stamp without building.
 
 The firmware itself defaults the version to `dev` (`substitutions.version` in
-`esp32-relay-node.yaml`). **Keep that default.** ESPHome only warns about an undeclared substitution
+`esp32-relay-driver.yaml`). **Keep that default.** ESPHome only warns about an undeclared substitution
 and then ships the literal `${version}` as the version, so without a default a missing build argument
 would silently publish a placeholder. CI additionally fails if the stamp is lost.
 
@@ -149,13 +149,13 @@ would silently publish a placeholder. CI additionally fails if the stamp is lost
 (`git tag v0.2.0`) and flash from it. There is also no attached binary: a CI-built binary contains
 placeholder secrets and cannot be flashed onto a van.
 
-## Node info and health
+## Device info and health
 
-The node appears on the dashboard's Device page like every other Node. The static fields live in
-`manifest.json`, the single source. It must not contain `version` or `host_serial`. Optional fields
+The device appears on the dashboard's Device page like every other Device. The static fields live in
+`manifest.json`, the single source. It must not contain `version` or `board_serial`. Optional fields
 (`manufacturer`, `homepage`) are omitted from the info when empty.
 `scripts/manifest_substitutions.py` turns it into the build's substitutions, for both the flash
-script and CI. `host_serial` is the board's MAC in the form `AA:BB:CC:DD:EE:FF`, so it can be
+script and CI. `board_serial` is the board's MAC in the form `AA:BB:CC:DD:EE:FF`, so it can be
 compared with the label on the board.
 
 ## Acceptance (on the board, before it goes in the van)
@@ -177,7 +177,7 @@ manual:
 
 ## CI
 
-`.github/workflows/validate.yml` runs the script tests, then builds `esp32-relay-node.yaml` with
+`.github/workflows/validate.yml` runs the script tests, then builds `esp32-relay-driver.yaml` with
 `esphome/build-action` (pinned by commit SHA, with ESPHome pinned) against the placeholder
 `secrets.yaml.example`. It passes a CI version (`ci-<short sha>`) and the manifest as substitutions,
 then fails if:
@@ -188,10 +188,10 @@ then fails if:
 
 The placeholder check exists because ESPHome exits 0 on an undeclared substitution.
 
-There is no release workflow and no versioned image to publish: the node is flashed once per board
+There is no release workflow and no versioned image to publish: the device is flashed once per board
 from the owner's checkout, and `hub`'s deployment manifest references this repo's flash instructions.
 
 > **Two different `manifest.json` files.** The build action also writes its own `manifest.json` (an
 > ESP Web Tools manifest) into its output folder, named after the device. That is unrelated to the
-> `manifest.json` at this repo's root, which describes the Node. The root one is the source of the
-> Node info; the action's is a build artifact and is not used here.
+> `manifest.json` at this repo's root, which describes the Device. The root one is the source of the
+> Device info; the action's is a build artifact and is not used here.

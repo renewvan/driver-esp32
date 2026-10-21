@@ -14,12 +14,12 @@ SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_resolved_co
 
 RESOLVED = """\
 substitutions:
-  node_name: renewvan-esp32-relay
+  device_name: renewvan-esp32-relay
   version: {version}
 esphome:
   name: renewvan-esp32-relay
   project:
-    name: renewvan.node-esp32-relay
+    name: renewvan.driver-esp32-relay
     version: {version}
   min_version: 2026.9.1
 mqtt:
