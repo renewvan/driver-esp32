@@ -145,9 +145,13 @@ The firmware itself defaults the version to `dev` (`substitutions.version` in
 and then ships the literal `${version}` as the version, so without a default a missing build argument
 would silently publish a placeholder. CI additionally fails if the stamp is lost.
 
-**Releases are git tags.** There is no `version` file and no release workflow; tag the commit
-(`git tag v0.2.0`) and flash from it. There is also no attached binary: a CI-built binary contains
-placeholder secrets and cannot be flashed onto a van.
+**Releases are git tags.** There is no `version` file. Start a release from **Actions → Release →
+Run workflow**, or `gh workflow run release.yml -f bump=minor`: one run works out the next version
+from the latest `v*` tag, tags `main`, creates the GitHub release, and compiles the tagged tree as a
+gate. Then flash from that tag with `scripts/flash.sh`. **No binary is attached**: WiFi, MQTT and the
+OTA password are compiled in from `secrets.yaml`, so a CI-built binary contains placeholders and
+cannot be flashed onto a van (and would publish a known OTA password). The process is shared by every
+renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`).
 
 ## Device info and health
 
@@ -188,8 +192,8 @@ then fails if:
 
 The placeholder check exists because ESPHome exits 0 on an undeclared substitution.
 
-There is no release workflow and no versioned image to publish: the device is flashed once per board
-from the owner's checkout, and `hub`'s deployment manifest references this repo's flash instructions.
+There is no versioned image to publish: the device is flashed once per board from the owner's
+checkout of a release tag, and `hub`'s deployment manifest references this repo's flash instructions.
 
 > **Two different `manifest.json` files.** The build action also writes its own `manifest.json` (an
 > ESP Web Tools manifest) into its output folder, named after the device. That is unrelated to the
