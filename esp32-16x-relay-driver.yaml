@@ -186,7 +186,8 @@ mqtt:
           // never "0.0.0.0", when there is none: the schema rejects the unspecified address.
           for (const auto &address : network::get_ip_addresses()) {
             if (address.is_set() && address.is_ip4()) {
-              root["ip"] = address.str();
+              char ip_buf[network::IP_ADDRESS_BUFFER_SIZE];
+              root["ip"] = address.str_to(ip_buf);
               break;
             }
           }
