@@ -61,10 +61,10 @@ def main():
 
     try:
         values = flatten(manifest)
-        # Asked for by name, the manifest must be that variant's: a copy-pasted manifest that
-        # still names another Driver would publish under that Driver's key.
-        if variant is not None and manifest["driver"] != variant:
-            raise ValueError(f"driver is '{manifest['driver']}', expected '{variant}'")
+        # Asked for by name, the manifest must carry this repo's one Driver key: a manifest
+        # copied from another repo would publish under that Driver's topics.
+        if variant is not None and manifest["driver"] != variants.DRIVER_KEY:
+            raise ValueError(f"driver is '{manifest['driver']}', expected '{variants.DRIVER_KEY}'")
     except ValueError as err:
         print(f"{path}: {err}", file=sys.stderr)
         return 1

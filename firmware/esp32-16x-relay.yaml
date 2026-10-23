@@ -5,7 +5,7 @@
 # and schema/relay.schema.json. In short, per channel `relay_01` .. `relay_16`:
 #   renewvan/relay/<id>/state     retained JSON true/false, published AFTER the output changed
 #   renewvan/relay/<id>/name      retained JSON string, optional (the only label on the wire)
-#   renewvan/relay/<id>/driver    retained JSON string, always "esp32-16x-relay" (the owning Driver)
+#   renewvan/relay/<id>/driver    retained JSON string, always "esp32" (the owning Driver, the repo-wide key)
 #   renewvan/relay/<id>/set       unretained JSON true / false (no toggle)
 #   renewvan/relay/<id>/name/set  unretained JSON string, 1..63 bytes
 #
@@ -28,6 +28,7 @@
 # variants (WiFi, OTA, MQTT connection, Driver info/health) is packages/base.yaml; this file is
 # the board, its channels, and the relay's step of the connect chain.
 substitutions:
+  variant: esp32-16x-relay
   device_name: renewvan-esp32-16x-relay
   friendly_name: Renewvan ESP32 16x Relay Driver
   fallback_ap_ssid: "Renewvan ESP32 16x Fallback"

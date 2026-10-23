@@ -14,7 +14,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "manifest_substitutions.py"
 
 FULL = {
-    "driver": "esp32-16x-relay",
+    "driver": "esp32",
     "product": "ESP32 16-channel relay board",
     "source": "ESP32 with two chained SN74HC595 shift registers",
     "publishes": ["relay"],
@@ -45,7 +45,7 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             lines(result),
             {
-                "driver": "esp32-16x-relay",
+                "driver": "esp32",
                 "product": "ESP32 16-channel relay board",
                 "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
@@ -91,7 +91,7 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             dict(zip(tokens[1::3], tokens[2::3])),
             {
-                "driver": "esp32-16x-relay",
+                "driver": "esp32",
                 "product": "ESP32 16-channel relay board",
                 "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
@@ -143,7 +143,7 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(by_path.returncode, 0, by_path.stderr)
         self.assertEqual(by_name.stdout, by_path.stdout)
         values = lines(by_name)
-        self.assertEqual(values["driver"], "esp32-16x-relay")
+        self.assertEqual(values["driver"], "esp32")
         self.assertEqual(values["publishes"], '[\\"relay\\"]')
         self.assertEqual(values["homepage"], "https://github.com/renewvan/driver-esp32")
 
@@ -154,9 +154,9 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
 
-    def test_a_variant_name_is_held_to_its_manifests_driver(self):
-        # `manifests/<name>.json` that still names another Driver would publish under that
-        # Driver's key, so asking for it by name fails; the same file by path is the caller's
+    def test_a_variant_name_is_held_to_the_repos_driver_key(self):
+        # `manifests/<name>.json` naming another Driver would publish under that Driver's
+        # topics, so asking for it by name fails; the same file by path is the caller's
         # business (tests, ad-hoc builds).
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -164,14 +164,14 @@ class ManifestSubstitutions(unittest.TestCase):
             (root / "manifests").mkdir()
             shutil.copy(SCRIPT, root / "scripts")
             shutil.copy(SCRIPT.parent / "variants.py", root / "scripts")
-            (root / "manifests" / "other.json").write_text(json.dumps(FULL))  # driver: esp32-16x-relay
+            (root / "manifests" / "other.json").write_text(json.dumps({**FULL, "driver": "esp32-16x-relay"}))
             result = subprocess.run(
                 [sys.executable, str(root / "scripts" / SCRIPT.name), "other"],
                 capture_output=True,
                 text=True,
             )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("expected 'other'", result.stderr)
+        self.assertIn("expected 'esp32'", result.stderr)
         self.assertEqual(result.stdout, "")
 
 

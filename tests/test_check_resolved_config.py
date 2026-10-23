@@ -29,7 +29,7 @@ esphome:
 mqtt:
   broker: 192.168.1.10
   will_message:
-    topic: renewvan/esp32-16x-relay/health
+    topic: renewvan/esp32/health
     payload: offline
 """
 
@@ -109,15 +109,24 @@ class ResolvedConfigGuard(unittest.TestCase):
         result = check(RESOLVED.format(version="ci-1234abc"), variant="esp32-other")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("renewvan.driver-esp32-esp32-other", result.stderr)
-        self.assertIn("renewvan/esp32-other/health", result.stderr)
+        self.assertIn("renewvan-esp32-other", result.stderr)
 
     def test_health_topic_of_another_driver_fails_even_with_the_right_project_name(self):
         resolved = RESOLVED.format(version="ci-1234abc").replace(
-            "renewvan/esp32-16x-relay/health", "renewvan/other/health"
+            "renewvan/esp32/health", "renewvan/other/health"
         )
         result = check(resolved)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("renewvan/esp32-16x-relay/health", result.stderr)
+        self.assertIn("renewvan/esp32/health", result.stderr)
+
+    def test_a_per_variant_health_topic_fails_because_the_driver_key_is_repo_wide(self):
+        # The old key-per-variant wiring: health under the variant's name, not under `esp32`.
+        resolved = RESOLVED.format(version="ci-1234abc").replace(
+            "renewvan/esp32/health", "renewvan/esp32-16x-relay/health"
+        )
+        result = check(resolved)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("renewvan/esp32/health", result.stderr)
 
     def test_the_resolved_firmware_of_every_variant_passes_when_esphome_is_installed(self):
         # Real `esphome config` output, not a fixture: skipped where ESPHome is absent (CI

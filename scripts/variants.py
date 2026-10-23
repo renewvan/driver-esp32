@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """The firmware variants of this repo, discovered from the directory layout.
 
-A variant is one ESP32 firmware image, i.e. one Driver. Its name is the stem shared by
-  manifests/<variant>.json   the static Driver fields; its `driver` key MUST equal <variant>
+A variant is one ESP32 firmware image (one kind of board). Its name is the stem shared by
+  manifests/<variant>.json   the static Driver fields; its `driver` key MUST be DRIVER_KEY
   firmware/<variant>.yaml    the ESPHome entrypoint
+The Driver key is repo-wide: every variant publishes under `renewvan/esp32/info|health`.
 The manifests/ directory is the list: CI, the release build and every script derive the variants
 from it, so adding a variant needs no edit anywhere else.
 
 usage: variants.py list    print the variants as a compact JSON array (for a CI matrix)
        variants.py check   fail unless every variant satisfies the layout invariants above
 
-Importable: ROOT, discover(), manifest_path(), firmware_path(), resolve_manifest(), check().
+Importable: ROOT, DRIVER_KEY, discover(), manifest_path(), firmware_path(), resolve_manifest(), check().
 """
 
 import json
@@ -18,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# The one Driver of this repo: its repo name minus `driver-`. Every manifest carries it.
+DRIVER_KEY = "esp32"
 
 
 def discover(root=ROOT):
@@ -62,9 +65,9 @@ def check(root=ROOT):
         except ValueError as err:
             problems.append(f"manifests/{variant}.json is not valid JSON: {err}")
             continue
-        if manifest.get("driver") != variant:
+        if manifest.get("driver") != DRIVER_KEY:
             problems.append(
-                f"manifests/{variant}.json has driver '{manifest.get('driver')}', expected '{variant}'"
+                f"manifests/{variant}.json has driver '{manifest.get('driver')}', expected '{DRIVER_KEY}'"
             )
         if not firmware_path(variant, root).is_file():
             problems.append(f"manifests/{variant}.json has no firmware/{variant}.yaml")

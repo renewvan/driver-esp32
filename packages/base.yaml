@@ -4,7 +4,8 @@
 # its own entities.
 #
 # A variant MUST provide:
-#   substitutions  device_name       the ESPHome node name (hostname for OTA / mDNS)
+#   substitutions  variant           the variant's name (its file stem), for the ESPHome project name
+#                  device_name       the ESPHome node name (hostname for OTA / mDNS)
 #                  friendly_name     the human name ESPHome shows
 #                  fallback_ap_ssid  the recovery access point's SSID (max 32 bytes)
 #   script         publish_retained_state   publishes the variant's retained entity identity
@@ -32,9 +33,10 @@ esphome:
   # Exposes the stamped version as esphome.project.version so the CI build action
   # reports it (`project-version` output) and the guard can compare it. One project per
   # variant, `renewvan.driver-esp32-<variant>`: ESPHome allows exactly one dot in the name, so
-  # the variant is appended with a hyphen rather than as a third segment.
+  # the variant is appended with a hyphen rather than as a third segment. (`driver` is the
+  # repo-wide key `esp32`, the same for every variant, so it cannot name the project.)
   project:
-    name: renewvan.driver-esp32-${driver}
+    name: renewvan.driver-esp32-${variant}
     version: ${version}
 
 # WiFi/OTA credentials are install-specific, never committed. Copy secrets.yaml.example to
@@ -65,6 +67,11 @@ ota:
 # The van bus, the same Mosquitto every other driver publishes to.
 #
 # Driver info/health (renewvan/<driver>/info, renewvan/<driver>/health):
+# - `driver` is the repo-wide key `esp32` (manifests/*.json, checked by scripts/variants.py), not
+#   the variant. Every board of every variant therefore shares ONE retained info and ONE
+#   health topic with ONE last-will: one board dying marks the whole Driver offline, and a
+#   second kind of board would overwrite the first one's retained info. Accepted by the owner
+#   for a single board; a second board type needs the key reconsidered.
 # - topic_prefix: null drops ESPHome's own <device>/status, <device>/debug and discovery topics.
 # - discover_ip: false drops the esphome/discover and esphome/ping subscriptions.
 # - The built-in birth message is disabled (`birth_message:` empty). ESPHome would send

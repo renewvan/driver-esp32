@@ -6,6 +6,7 @@ trees, observed through the script's command line the way CI uses it.
 """
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,7 @@ import manifest_substitutions  # noqa: E402
 import variants  # noqa: E402
 
 MANIFEST = {
-    "driver": "demo-board",
+    "driver": "esp32",
     "product": "Demo board",
     "source": "Demo",
     "publishes": ["temperature"],
@@ -54,11 +55,15 @@ class RepoVariants(unittest.TestCase):
     def test_the_repo_layout_is_sound(self):
         self.assertEqual(variants.check(), [])
 
-    def test_every_manifest_stem_is_its_driver_key_and_has_its_firmware(self):
+    def test_the_driver_key_is_the_repo_name_minus_driver_prefix(self):
+        self.assertEqual(variants.DRIVER_KEY, "esp32")
+        self.assertEqual(variants.DRIVER_KEY, ROOT.name.removeprefix("driver-"))
+
+    def test_every_manifest_carries_the_repo_wide_driver_key_and_has_its_firmware(self):
         for variant in variants.discover():
             with self.subTest(variant=variant):
                 manifest = json.loads(variants.manifest_path(variant).read_text())
-                self.assertEqual(manifest["driver"], variant)
+                self.assertEqual(manifest["driver"], variants.DRIVER_KEY)
                 self.assertTrue(variants.firmware_path(variant).is_file())
 
     def test_every_manifest_flattens_for_the_build(self):
@@ -66,16 +71,18 @@ class RepoVariants(unittest.TestCase):
             with self.subTest(variant=variant):
                 manifest = json.loads(variants.manifest_path(variant).read_text())
                 values = manifest_substitutions.flatten(manifest)
-                self.assertEqual(values["driver"], variant)
+                self.assertEqual(values["driver"], variants.DRIVER_KEY)
 
     def test_every_firmware_declares_the_identity_the_base_package_needs(self):
         # packages/base.yaml uses these and cannot default them: a variant that omits one
         # would ship a literal `${...}` (the placeholder guard catches it in CI too).
         for variant in variants.discover():
             text = variants.firmware_path(variant).read_text()
-            for key in ("device_name", "friendly_name", "fallback_ap_ssid"):
+            for key in ("variant", "device_name", "friendly_name", "fallback_ap_ssid"):
                 with self.subTest(variant=variant, key=key):
                     self.assertRegex(text, rf"(?m)^  {key}:")
+            with self.subTest(variant=variant, key="variant equals the file stem"):
+                self.assertRegex(text, rf"(?m)^  variant: {re.escape(variant)}$")
             with self.subTest(variant=variant, key="base package"):
                 self.assertIn("!include ../packages/base.yaml", text)
             with self.subTest(variant=variant, key="retained state hook"):
@@ -101,7 +108,7 @@ class Discovery(unittest.TestCase):
 
     def test_list_is_sorted_and_comes_from_manifests_only(self):
         root = self.tree(
-            manifests={"b-board": {**MANIFEST, "driver": "b-board"}, "a-board": {**MANIFEST, "driver": "a-board"}},
+            manifests={"b-board": MANIFEST, "a-board": MANIFEST},
             firmware=["a-board", "b-board", "unlisted"],
         )
         result = run("list", root)
@@ -112,12 +119,24 @@ class Discovery(unittest.TestCase):
         result = run("check", root)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_driver_key_differing_from_the_stem_fails_and_is_named(self):
+    def test_another_driver_key_fails_and_is_named(self):
         root = self.tree(manifests={"demo-board": {**MANIFEST, "driver": "other"}}, firmware=["demo-board"])
         result = run("check", root)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("manifests/demo-board.json", result.stderr)
         self.assertIn("'other'", result.stderr)
+        self.assertIn("expected 'esp32'", result.stderr)
+
+    def test_the_stem_as_driver_key_fails_because_the_key_is_repo_wide(self):
+        # The old key-per-variant convention: driver == file stem is now a violation.
+        root = self.tree(manifests={"demo-board": {**MANIFEST, "driver": "demo-board"}}, firmware=["demo-board"])
+        result = run("check", root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("expected 'esp32'", result.stderr)
+
+    def test_two_variants_sharing_the_key_pass(self):
+        root = self.tree(manifests={"a-board": MANIFEST, "b-board": MANIFEST}, firmware=["a-board", "b-board"])
+        self.assertEqual(run("check", root).returncode, 0)
 
     def test_manifest_without_firmware_fails_and_is_named(self):
         root = self.tree(manifests={"demo-board": MANIFEST}, firmware=[])
