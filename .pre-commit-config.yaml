@@ -1,6 +1,6 @@
 # Per renewvan/hub's docs/adr/0007-per-language-formatting-linting-convention.md
-# "config-only repos" case: no application code here (esp32-16x-relay-driver.yaml is
-# ESPHome config, flashed once, not a program this repo builds/tests), so
+# "config-only repos" case: no application code here (firmware/*.yaml and packages/*.yaml are
+# ESPHome config, flashed once per board, not a program this repo builds/tests), so
 # Prettier formatting is all there is -- no linter to add.
 #
 # Install once: `pip install pre-commit && pre-commit install`.

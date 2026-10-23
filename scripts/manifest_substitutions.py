@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""Flatten manifest.json into `key=value` lines for ESPHome substitutions.
+"""Flatten a variant's manifest into `key=value` lines for ESPHome substitutions.
 
 Used by scripts/flash.sh (esphome -s) and CI (build-action `substitutions:`), so the
-static Device fields have exactly one source: manifest.json. Optional fields that are
-empty are omitted, never emitted blank.
+static Driver fields have exactly one source: manifests/<variant>.json. Optional fields that
+are empty are omitted, never emitted blank.
 
 Values are escaped for a C++ string literal (`\\` and `"`): ESPHome pastes substitutions
 textually, and the firmware places them between double quotes inside a lambda.
 
-usage: manifest_substitutions.py MANIFEST [--esphome-args]
+usage: manifest_substitutions.py VARIANT|MANIFEST_PATH [--esphome-args]
+       manifest_substitutions.py esp32-16x-relay
+       manifest_substitutions.py manifests/esp32-16x-relay.json
 """
 
 import argparse
 import json
 import sys
 
-REQUIRED = ("device", "product", "source", "publishes")
+import variants
+
+REQUIRED = ("driver", "product", "source", "publishes")
 OPTIONAL = ("manufacturer", "homepage")
 # Stamped from the checkout / read from the board, never hand-written.
 FORBIDDEN = ("version", "board_serial")
@@ -39,7 +43,7 @@ def cpp_escape(value):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("manifest")
+    parser.add_argument("manifest", help="a variant name, or the path of its manifest")
     parser.add_argument(
         "--esphome-args",
         action="store_true",
@@ -47,13 +51,22 @@ def main():
     )
     args = parser.parse_args()
 
-    with open(args.manifest, encoding="utf-8") as handle:
-        manifest = json.load(handle)
+    path, variant = variants.resolve_manifest(args.manifest)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except OSError as err:
+        print(f"{args.manifest}: {err}", file=sys.stderr)
+        return 1
 
     try:
         values = flatten(manifest)
+        # Asked for by name, the manifest must be that variant's: a copy-pasted manifest that
+        # still names another Driver would publish under that Driver's key.
+        if variant is not None and manifest["driver"] != variant:
+            raise ValueError(f"driver is '{manifest['driver']}', expected '{variant}'")
     except ValueError as err:
-        print(f"{args.manifest}: {err}", file=sys.stderr)
+        print(f"{path}: {err}", file=sys.stderr)
         return 1
 
     if args.esphome_args:

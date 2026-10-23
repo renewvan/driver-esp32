@@ -1,9 +1,10 @@
-"""Seam: manifest.json -> ESPHome `key=value` substitution lines.
+"""Seam: a variant's manifest -> ESPHome `key=value` substitution lines.
 
 Observed through the script's command line, the way the flash script and CI use it.
 """
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,12 +14,12 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "manifest_substitutions.py"
 
 FULL = {
-    "device": "esp32-16x-relay",
+    "driver": "esp32-16x-relay",
     "product": "ESP32 16-channel relay board",
     "source": "ESP32 with two chained SN74HC595 shift registers",
     "publishes": ["relay"],
     "manufacturer": "renewvan",
-    "homepage": "https://github.com/renewvan/driver-esp32-16x-relay",
+    "homepage": "https://github.com/renewvan/driver-esp32",
 }
 
 
@@ -44,24 +45,24 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             lines(result),
             {
-                "device": "esp32-16x-relay",
+                "driver": "esp32-16x-relay",
                 "product": "ESP32 16-channel relay board",
                 "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
                 "manufacturer": "renewvan",
-                "homepage": "https://github.com/renewvan/driver-esp32-16x-relay",
+                "homepage": "https://github.com/renewvan/driver-esp32",
             },
         )
 
     def test_empty_optional_fields_are_omitted_not_blank(self):
         minimal = {k: v for k, v in FULL.items() if k not in ("manufacturer", "homepage")}
         self.assertEqual(
-            set(lines(run(minimal))), {"device", "product", "source", "publishes"}
+            set(lines(run(minimal))), {"driver", "product", "source", "publishes"}
         )
 
         blank = {**FULL, "manufacturer": "", "homepage": ""}
         self.assertEqual(
-            set(lines(run(blank))), {"device", "product", "source", "publishes"}
+            set(lines(run(blank))), {"driver", "product", "source", "publishes"}
         )
 
     def test_publishes_decodes_back_to_the_json_array_for_multiple_types(self):
@@ -90,12 +91,12 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             dict(zip(tokens[1::3], tokens[2::3])),
             {
-                "device": "esp32-16x-relay",
+                "driver": "esp32-16x-relay",
                 "product": "ESP32 16-channel relay board",
                 "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
                 "manufacturer": "renewvan",
-                "homepage": "https://github.com/renewvan/driver-esp32-16x-relay",
+                "homepage": "https://github.com/renewvan/driver-esp32",
             },
         )
 
@@ -121,7 +122,7 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertIn("board_serial", result.stderr)
 
     def test_missing_required_field_is_rejected(self):
-        for field in ("device", "product", "source", "publishes"):
+        for field in ("driver", "product", "source", "publishes"):
             with self.subTest(field=field):
                 broken = {k: v for k, v in FULL.items() if k != field}
                 result = run(broken)
@@ -133,16 +134,45 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("publishes", result.stderr)
 
-    def test_the_repos_own_manifest_flattens_to_the_renamed_device(self):
-        manifest = SCRIPT.parent.parent / "manifest.json"
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), str(manifest)], capture_output=True, text=True
+    def test_the_relay_variant_flattens_the_same_by_name_and_by_path(self):
+        manifest = SCRIPT.parent.parent / "manifests" / "esp32-16x-relay.json"
+        by_path, by_name = (
+            subprocess.run([sys.executable, str(SCRIPT), arg], capture_output=True, text=True)
+            for arg in (str(manifest), "esp32-16x-relay")
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        values = lines(result)
-        self.assertEqual(values["device"], "esp32-16x-relay")
+        self.assertEqual(by_path.returncode, 0, by_path.stderr)
+        self.assertEqual(by_name.stdout, by_path.stdout)
+        values = lines(by_name)
+        self.assertEqual(values["driver"], "esp32-16x-relay")
         self.assertEqual(values["publishes"], '[\\"relay\\"]')
-        self.assertEqual(values["homepage"], "https://github.com/renewvan/driver-esp32-16x-relay")
+        self.assertEqual(values["homepage"], "https://github.com/renewvan/driver-esp32")
+
+    def test_an_unknown_variant_name_is_rejected(self):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "no-such-variant"], capture_output=True, text=True
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_a_variant_name_is_held_to_its_manifests_driver(self):
+        # `manifests/<name>.json` that still names another Driver would publish under that
+        # Driver's key, so asking for it by name fails; the same file by path is the caller's
+        # business (tests, ad-hoc builds).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            (root / "manifests").mkdir()
+            shutil.copy(SCRIPT, root / "scripts")
+            shutil.copy(SCRIPT.parent / "variants.py", root / "scripts")
+            (root / "manifests" / "other.json").write_text(json.dumps(FULL))  # driver: esp32-16x-relay
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts" / SCRIPT.name), "other"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("expected 'other'", result.stderr)
+        self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":

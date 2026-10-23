@@ -1,0 +1,117 @@
+# driver-esp32 variant esp32-16x-relay: 16-channel switched-load relay driver (ESP32-WROOM + two
+# chained SN74HC595).
+#
+# The wire contract is docs/adr/0013-writable-relay-and-its-wire-contract.md in renewvan/hub
+# and schema/relay.schema.json. In short, per channel `relay_01` .. `relay_16`:
+#   renewvan/relay/<id>/state     retained JSON true/false, published AFTER the output changed
+#   renewvan/relay/<id>/name      retained JSON string, optional (the only label on the wire)
+#   renewvan/relay/<id>/driver    retained JSON string, always "esp32-16x-relay" (the owning Driver)
+#   renewvan/relay/<id>/set       unretained JSON true / false (no toggle)
+#   renewvan/relay/<id>/name/set  unretained JSON string, 1..63 bytes
+#
+# Safety, by design (see the ADR):
+#   * Every channel is OFF after any reset, brownout, update or crash (restore_mode ALWAYS_OFF).
+#   * Relays HOLD their last state while WiFi or the broker is down: no timeout-to-off, no
+#     local control. A manual override and any interlock (pump dry-run, heater thermal cutoff)
+#     are hardware concerns, never this firmware's.
+#   * No `api:` block: ESPHome reboots a device with no API client every 15 minutes, and a
+#     reboot is a real fault on this board. No `web_server:` either: it would be an
+#     unauthenticated second control path that bypasses the bus contract.
+#   * clean_session: a `set` published while the device was offline is not replayed on reconnect.
+#   * An external pull-up on the shift register's output-enable pin (GPIO5) is REQUIRED so the
+#     outputs stay high-impedance until firmware drives it. ESPHome drives nothing before
+#     setup(), so a glitch exists whatever the restore mode. See README.md, "Variant: esp32-16x-relay", "Acceptance".
+#
+# Static Driver fields (driver, product, source, publishes, and the optional manufacturer and
+# homepage) come ONLY from manifests/esp32-16x-relay.json, merged in as substitutions by
+# scripts/manifest_substitutions.py; see packages/base.yaml. Everything shared with other
+# variants (WiFi, OTA, MQTT connection, Driver info/health) is packages/base.yaml; this file is
+# the board, its channels, and the relay's step of the connect chain.
+substitutions:
+  device_name: renewvan-esp32-16x-relay
+  friendly_name: Renewvan ESP32 16x Relay Driver
+  fallback_ap_ssid: "Renewvan ESP32 16x Fallback"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Two chained SN74HC595: pins 0-7 on the register whose SER is the ESP32 data line, 8-15 on
+# the second. GPIO5 (oe_pin) and GPIO12 (latch) are strapping pins; the warning is
+# acknowledged. Do NOT add a pull-up on the latch net (GPIO12 high selects 1.8 V flash).
+sn74hc595:
+  - id: hc595
+    data_pin: GPIO14
+    clock_pin: GPIO13
+    latch_pin: { number: GPIO12, ignore_strapping_warning: true }
+    oe_pin: { number: GPIO5, ignore_strapping_warning: true }
+    sr_count: 2
+
+# Step (1) of the ONE connect chain in packages/base.yaml (states, then Driver info, then
+# `online`). It is a script and not an `mqtt.on_connect` entry of its own because the order of
+# separate on_connect entries is undefined: the sixteen states must land before `online`.
+script:
+  - id: publish_retained_state
+    then:
+      # Every channel's retained driver, state, and its retained name when it has one.
+      - lambda: |-
+          struct Channel { const char *id; switch_::Switch *sw; std::string *name; };
+          const Channel channels[] = {
+            {"relay_01", id(relay_relay_01), &id(name_relay_01)},
+            {"relay_02", id(relay_relay_02), &id(name_relay_02)},
+            {"relay_03", id(relay_relay_03), &id(name_relay_03)},
+            {"relay_04", id(relay_relay_04), &id(name_relay_04)},
+            {"relay_05", id(relay_relay_05), &id(name_relay_05)},
+            {"relay_06", id(relay_relay_06), &id(name_relay_06)},
+            {"relay_07", id(relay_relay_07), &id(name_relay_07)},
+            {"relay_08", id(relay_relay_08), &id(name_relay_08)},
+            {"relay_09", id(relay_relay_09), &id(name_relay_09)},
+            {"relay_10", id(relay_relay_10), &id(name_relay_10)},
+            {"relay_11", id(relay_relay_11), &id(name_relay_11)},
+            {"relay_12", id(relay_relay_12), &id(name_relay_12)},
+            {"relay_13", id(relay_relay_13), &id(name_relay_13)},
+            {"relay_14", id(relay_relay_14), &id(name_relay_14)},
+            {"relay_15", id(relay_relay_15), &id(name_relay_15)},
+            {"relay_16", id(relay_relay_16), &id(name_relay_16)},
+          };
+          for (const Channel &c : channels) {
+            std::string base = std::string("renewvan/relay/") + c.id;
+            // An explicit std::string: a const char* here binds the (topic, payload, length, qos)
+            // overload, which sent an empty, unretained payload.
+            // The owning Driver, a JSON string, retained with the rest of the instance's identity.
+            id(mqtt_client).publish(base + "/driver", std::string("\"${driver}\""), 0, true);
+            const std::string state = c.sw->state ? "true" : "false";
+            id(mqtt_client).publish(base + "/state", state, 0, true);
+            if (!c.name->empty()) {
+              JsonDocument doc;
+              doc.set(*c.name);
+              std::string payload;
+              serializeJson(doc, payload);
+              id(mqtt_client).publish(base + "/name", payload, 0, true);
+            }
+          }
+
+# Sixteen channels, one line each. Adding or renaming one is a one-line change: `ch` is the id
+# on the bus (and in the topics), `bit` is the shift-register output 0..15. ESPHome rejects a
+# `bit` above 15, a duplicate `bit` and a duplicate `ch`; it does not notice a skipped `bit`.
+# The `publish_retained_state` script above lists every `ch`: keep the two in step when adding
+# a channel (scripts/check_relay_channels.py fails CI on a mismatch).
+packages:
+  base: !include ../packages/base.yaml
+  relay_01: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_01, bit: 0 } }
+  relay_02: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_02, bit: 1 } }
+  relay_03: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_03, bit: 2 } }
+  relay_04: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_04, bit: 3 } }
+  relay_05: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_05, bit: 4 } }
+  relay_06: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_06, bit: 5 } }
+  relay_07: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_07, bit: 6 } }
+  relay_08: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_08, bit: 7 } }
+  relay_09: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_09, bit: 8 } }
+  relay_10: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_10, bit: 9 } }
+  relay_11: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_11, bit: 10 } }
+  relay_12: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_12, bit: 11 } }
+  relay_13: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_13, bit: 12 } }
+  relay_14: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_14, bit: 13 } }
+  relay_15: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_15, bit: 14 } }
+  relay_16: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_16, bit: 15 } }

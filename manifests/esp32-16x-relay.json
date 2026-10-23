@@ -1,8 +1,8 @@
 {
-  "device": "esp32-16x-relay",
+  "driver": "esp32-16x-relay",
   "product": "ESP32-WROOM-E 16-channel relay",
   "source": "ESP32-WROOM-E",
   "publishes": ["relay"],
   "manufacturer": "renewvan",
-  "homepage": "https://github.com/renewvan/driver-esp32-16x-relay"
+  "homepage": "https://github.com/renewvan/driver-esp32"
 }

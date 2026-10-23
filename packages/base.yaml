@@ -1,0 +1,142 @@
+# What every ESP32 variant in driver-esp32 shares: WiFi, OTA, logger, captive portal, the
+# van-bus MQTT connection and the Driver info/health publish chain, and the version stamp.
+# A variant's firmware/<variant>.yaml includes this and adds only its board, its hardware and
+# its own entities.
+#
+# A variant MUST provide:
+#   substitutions  device_name       the ESPHome node name (hostname for OTA / mDNS)
+#                  friendly_name     the human name ESPHome shows
+#                  fallback_ap_ssid  the recovery access point's SSID (max 32 bytes)
+#   script         publish_retained_state   publishes the variant's retained entity identity
+#                  and state (see the connect chain below); an entity-less variant leaves it empty
+#   from the build `driver`, `product`, `source`, `publishes` (+ optional `manufacturer`,
+#   `homepage`): the variant's manifests/<variant>.json, merged in as substitutions by
+#   scripts/manifest_substitutions.py (scripts/flash.sh and CI both call it).
+# They are deliberately not declared here: there is one source, and a build that skips the
+# manifest fails the guard on the unexpanded placeholder instead of publishing a copy.
+#
+# The optional fields are omitted from the manifest when empty, so they are declared here as
+# empty and left out of the published info.
+#
+# `version` is stamped from the checkout by scripts/flash.sh. KEEP the `dev` default:
+# ESPHome only warns on an undeclared substitution and ships the literal "${version}"
+# otherwise, so removing it turns a missing build argument into a silent bad version.
+substitutions:
+  version: dev
+  manufacturer: ""
+  homepage: ""
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  # Exposes the stamped version as esphome.project.version so the CI build action
+  # reports it (`project-version` output) and the guard can compare it. One project per
+  # variant, `renewvan.driver-esp32-<variant>`: ESPHome allows exactly one dot in the name, so
+  # the variant is appended with a hyphen rather than as a third segment.
+  project:
+    name: renewvan.driver-esp32-${driver}
+    version: ${version}
+
+# WiFi/OTA credentials are install-specific, never committed. Copy secrets.yaml.example to
+# secrets.yaml (gitignored) and fill in your own values. ESPHome looks a secret up next to
+# the entrypoint (firmware/), so firmware/secrets.yaml is a symlink to the one in the repo root.
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # NONE, not ESPHome's default LIGHT: with power save the radio sleeps between beacons and an
+  # inbound `set` waits for the next wake. Measured on the relay board: ping 55 ms to 3.6 s,
+  # 4 of 10 lost, so a command regularly took longer than the dashboard's 4 second give-up. These
+  # boards are mains powered, so the extra draw costs nothing.
+  power_save_mode: NONE
+
+  # Fallback AP for initial/recovery config if the configured network is unreachable.
+  ap:
+    ssid: "${fallback_ap_ssid}"
+    password: !secret wifi_ap_fallback_password
+
+captive_portal:
+
+logger:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# The van bus, the same Mosquitto every other driver publishes to.
+#
+# Driver info/health (renewvan/<driver>/info, renewvan/<driver>/health):
+# - topic_prefix: null drops ESPHome's own <device>/status, <device>/debug and discovery topics.
+# - discover_ip: false drops the esphome/discover and esphome/ping subscriptions.
+# - The built-in birth message is disabled (`birth_message:` empty). ESPHome would send
+#   it from loop(), after on_connect, so `online` could land before the state and info.
+# - The last-will and shutdown messages publish `offline` on the health topic. A will
+#   carries one topic, so it cannot clear a variant's retained state topics: a consumer treats
+#   state as unknown whenever this Driver's health is not `online`.
+# - on_connect fires on the transport callback, BEFORE the client reports connected,
+#   and mqtt.publish silently drops anything sent while not connected. So the handler
+#   waits for mqtt.connected first.
+# - ONE connect chain, in this order: (1) the variant's retained entity state, (2) retained
+#   Driver info, (3) retained `online`. A consumer that sees `online` therefore never finds a
+#   stale state, and info stays immediately before `online` (ADR 0011). The order of separate
+#   on_connect entries is undefined, so the chain is one entry and step (1) is the variant's
+#   `publish_retained_state` script: script.execute runs its actions inline, so it completes
+#   before step (2) starts. The variant's script cannot be a second on_connect entry.
+# - Info carries the board's `ip` as of the moment it is published, so it is as fresh as the
+#   last (re)connect: a DHCP renewal that hands the board a new address is not seen until the
+#   MQTT session next reconnects.
+mqtt:
+  id: mqtt_client
+  broker: !secret mqtt_broker
+  port: !secret mqtt_port
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  discovery: false
+  topic_prefix: null
+  discover_ip: false
+  clean_session: true
+  birth_message:
+  will_message:
+    topic: renewvan/${driver}/health
+    payload: offline
+    retain: true
+  shutdown_message:
+    topic: renewvan/${driver}/health
+    payload: offline
+    retain: true
+  on_connect:
+    - wait_until:
+        mqtt.connected:
+    # (1) the variant's retained entity identity and state.
+    - script.execute: publish_retained_state
+    # (2) retained Driver info.
+    - mqtt.publish:
+        topic: renewvan/${driver}/info
+        retain: true
+        payload: !lambda |-
+          json::JsonBuilder builder;
+          JsonObject root = builder.root();
+          root["driver"] = "${driver}";
+          root["product"] = "${product}";
+          root["source"] = "${source}";
+          // `publishes` is a JSON array literal from the variant's manifest.
+          root["publishes"] = serialized(std::string("${publishes}"));
+          if (std::string("${manufacturer}") != "") root["manufacturer"] = "${manufacturer}";
+          if (std::string("${homepage}") != "") root["homepage"] = "${homepage}";
+          root["version"] = "${version}";
+          root["board_serial"] = get_mac_address_pretty();
+          // The address DHCP gave this board, so Settings > Drivers can show where to reach it.
+          // The first set IPv4 address (an IPv6 link-local also appears in this list). Omitted,
+          // never "0.0.0.0", when there is none: the schema rejects the unspecified address.
+          for (const auto &address : network::get_ip_addresses()) {
+            if (address.is_set() && address.is_ip4()) {
+              char ip_buf[network::IP_ADDRESS_BUFFER_SIZE];
+              root["ip"] = address.str_to(ip_buf);
+              break;
+            }
+          }
+          return builder.serialize();
+    # (3) retained online, last.
+    - mqtt.publish:
+        topic: renewvan/${driver}/health
+        payload: online
+        retain: true

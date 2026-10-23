@@ -1,0 +1,4 @@
+# Gitignore settings for ESPHome
+/.esphome/
+# secrets.yaml here is a TRACKED symlink to ../secrets.yaml (ESPHome looks secrets up next to the
+# entrypoint); the real, gitignored file is the one in the repo root.

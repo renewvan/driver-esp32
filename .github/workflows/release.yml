@@ -2,6 +2,9 @@ name: Release
 
 # Start a release from the Actions tab or `gh workflow run release.yml -f bump=minor`.
 # The process lives in renewvan/hub (docs/adr/0015); this file only says what this repo ships.
+# One tag stamps the same version into EVERY variant under manifests/: the reusable workflow
+# builds each one listed by `python3 scripts/variants.py list` (firmware/<variant>.yaml +
+# manifests/<variant>.json). The pinned hub ref must be a commit that has that variant matrix.
 on:
   workflow_dispatch:
     inputs:
@@ -30,10 +33,9 @@ jobs:
       # Not used by kind: firmware, but GitHub validates the whole called workflow up front and
       # its publish-image job requests packages: write; a caller that grants less fails to start.
       packages: write
-    uses: renewvan/hub/.github/workflows/release.yml@eb9ad8a4b29519bbbd1c33b1092cdb7719628ec9
+    uses: renewvan/hub/.github/workflows/release.yml@a1139b7c9a643427632d7cea5105d4e39079b1d9
     with:
       kind: firmware
-      esphome-yaml: esp32-16x-relay-driver.yaml
       esphome-version: "2026.9.1"
       bump: ${{ inputs.bump }}
       version: ${{ inputs.version }}

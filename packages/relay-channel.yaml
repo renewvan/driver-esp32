@@ -1,11 +1,14 @@
-# One relay channel. Included once per channel from esp32-16x-relay-driver.yaml:
-#   relay_01: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_01, bit: 0 } }
+# One relay channel. Included once per channel from firmware/esp32-16x-relay.yaml:
+#   relay_01: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_01, bit: 0 } }
 # vars: ch = the channel id on the bus (renewvan/relay/<ch>/...), bit = shift-register output 0..15.
 #
 # This file holds only what is per channel and can be merged by id: the switch, the restoring
 # name, and the two subscriptions. It deliberately holds NO on_connect entry: the order of
-# separate on_connect entries is undefined, so the sixteen states are published from the one
-# connect chain in esp32-16x-relay-driver.yaml (states, then info, then online).
+# separate on_connect entries is undefined, so the sixteen states are published from the
+# `publish_retained_state` script in firmware/esp32-16x-relay.yaml, which is step (1) of the one
+# connect chain in base.yaml (states, then info, then online).
+#
+# It needs `mqtt_client` from packages/base.yaml (the firmware includes both).
 
 globals:
   # Retained label, restored across reboot and OTA. 63 bytes by default; the rename handler

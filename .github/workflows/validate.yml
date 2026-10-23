@@ -11,16 +11,39 @@ env:
   ESPHOME_VERSION: "2026.9.1"
 
 jobs:
-  validate:
+  scripts:
     runs-on: ubuntu-latest
+    outputs:
+      variants: ${{ steps.list.outputs.variants }}
     steps:
       - uses: actions/checkout@v5
 
       - name: Unit tests for the build scripts
         run: python3 -m unittest discover -s tests -v
 
-      - name: Guard the channel list
-        run: python3 scripts/check_channels.py esp32-16x-relay-driver.yaml
+      # Every manifests/<variant>.json has driver == <variant> and its firmware/<variant>.yaml.
+      - name: Guard the variant layout
+        run: python3 scripts/variants.py check
+
+      # The matrix is the directory: adding a variant adds a job, nothing here changes.
+      - name: List the variants
+        id: list
+        run: echo "variants=$(python3 scripts/variants.py list)" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: scripts
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.scripts.outputs.variants) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Only the relay has a channel list; a variant without one has nothing to compare.
+      - name: Guard the relay channel list
+        if: matrix.variant == 'esp32-16x-relay'
+        run: python3 scripts/check_relay_channels.py "${{ matrix.variant }}"
 
       - name: Fake secrets for config validation
         run: cp secrets.yaml.example secrets.yaml
@@ -28,13 +51,15 @@ jobs:
       # The CI version is deliberately not a real release: nothing built here is flashed.
       - name: Compose the CI version and the manifest substitutions
         id: stamp
+        env:
+          VARIANT: ${{ matrix.variant }}
         run: |
           version="ci-${GITHUB_SHA::7}"
           {
             echo "version=${version}"
             echo "substitutions<<EOF"
             echo "version=${version}"
-            python3 scripts/manifest_substitutions.py manifest.json
+            python3 scripts/manifest_substitutions.py "${VARIANT}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -43,7 +68,7 @@ jobs:
         id: build
         uses: esphome/build-action@ae5408cdbc4f70692bf8e345c4982bca05a93667 # v8.1.0
         with:
-          yaml-file: esp32-16x-relay-driver.yaml
+          yaml-file: firmware/${{ matrix.variant }}.yaml
           version: ${{ env.ESPHOME_VERSION }}
           substitutions: ${{ steps.stamp.outputs.substitutions }}
 
@@ -53,17 +78,19 @@ jobs:
       - name: Resolve the configuration
         env:
           VERSION: ${{ steps.stamp.outputs.version }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           manifest_args=()
           while IFS= read -r -d '' arg; do
             manifest_args+=("${arg}")
-          done < <(python3 scripts/manifest_substitutions.py manifest.json --esphome-args)
+          done < <(python3 scripts/manifest_substitutions.py "${VARIANT}" --esphome-args)
           docker run --rm -v "$PWD":/config -w /config --user "$(id -u):$(id -g)" \
             --entrypoint esphome "ghcr.io/esphome/esphome:${ESPHOME_VERSION}" \
-            -s version "${VERSION}" "${manifest_args[@]}" config esp32-16x-relay-driver.yaml > resolved.yaml
+            -s version "${VERSION}" "${manifest_args[@]}" config "firmware/${VARIANT}.yaml" > resolved.yaml
 
-      - name: Guard the stamped version
+      - name: Guard the stamped version and the variant
         run: |
           python3 scripts/check_resolved_config.py resolved.yaml \
+            --variant "${{ matrix.variant }}" \
             --expected-version "${{ steps.stamp.outputs.version }}" \
             --reported-version "${{ steps.build.outputs.project-version }}"
