@@ -4,13 +4,17 @@ Fixtures are real `esphome config` output shapes: an undeclared substitution sur
 verbatim as `${name}` and `esphome config` still exits 0, so only this guard catches it.
 """
 
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_resolved_config.py"
+ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = ROOT / "scripts" / "check_resolved_config.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+import variants  # noqa: E402
 
 RESOLVED = """\
 substitutions:
@@ -19,15 +23,18 @@ substitutions:
 esphome:
   name: renewvan-esp32-16x-relay
   project:
-    name: renewvan.driver-esp32-16x-relay
+    name: renewvan.driver-esp32-esp32-16x-relay
     version: {version}
   min_version: 2026.9.1
 mqtt:
   broker: 192.168.1.10
+  will_message:
+    topic: renewvan/esp32-16x-relay/health
+    payload: offline
 """
 
 
-def check(resolved, expected_version="ci-1234abc", reported_version=None):
+def check(resolved, expected_version="ci-1234abc", reported_version=None, variant="esp32-16x-relay"):
     """Run the guard. `reported_version` is the build action's `project-version` output."""
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "resolved.yaml"
@@ -37,6 +44,8 @@ def check(resolved, expected_version="ci-1234abc", reported_version=None):
                 sys.executable,
                 str(SCRIPT),
                 str(path),
+                "--variant",
+                variant,
                 "--expected-version",
                 expected_version,
                 "--reported-version",
@@ -94,6 +103,52 @@ class ResolvedConfigGuard(unittest.TestCase):
     def test_dev_default_is_accepted_only_when_it_is_the_expected_value(self):
         result = check(RESOLVED.format(version="dev"), expected_version="dev")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_resolved_config_of_another_variant_fails(self):
+        # The wrong manifest stamped into this variant's build: both names disagree.
+        result = check(RESOLVED.format(version="ci-1234abc"), variant="esp32-other")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("renewvan.driver-esp32-esp32-other", result.stderr)
+        self.assertIn("renewvan/esp32-other/health", result.stderr)
+
+    def test_health_topic_of_another_driver_fails_even_with_the_right_project_name(self):
+        resolved = RESOLVED.format(version="ci-1234abc").replace(
+            "renewvan/esp32-16x-relay/health", "renewvan/other/health"
+        )
+        result = check(resolved)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("renewvan/esp32-16x-relay/health", result.stderr)
+
+    def test_the_resolved_firmware_of_every_variant_passes_when_esphome_is_installed(self):
+        # Real `esphome config` output, not a fixture: skipped where ESPHome is absent (CI
+        # runs the same guard on the real resolved file).
+        esphome = shutil.which("esphome")
+        if esphome is None:
+            self.skipTest("esphome is not installed")
+        for variant in variants.discover():
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as tmp:
+                secrets = Path(tmp) / "secrets.yaml"
+                shutil.copy(ROOT / "secrets.yaml.example", secrets)
+                args = subprocess.run(
+                    [sys.executable, str(ROOT / "scripts" / "manifest_substitutions.py"), variant, "--esphome-args"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.split("\0")[:-1]
+                # Resolved against a copy of the tree, so the repo's real secrets are never read.
+                tree = Path(tmp) / "tree"
+                shutil.copytree(ROOT, tree, ignore=shutil.ignore_patterns(".git", ".esphome", "__pycache__", "secrets.yaml"))
+                shutil.copy(secrets, tree / "secrets.yaml")
+                (tree / "firmware" / "secrets.yaml").symlink_to("../secrets.yaml")
+                resolved = subprocess.run(
+                    [esphome, "-s", "version", "ci-test", *args, "config", f"firmware/{variant}.yaml"],
+                    cwd=tree,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(resolved.returncode, 0, resolved.stdout + resolved.stderr)
+                result = check(resolved.stdout, expected_version="ci-test", variant=variant)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":
