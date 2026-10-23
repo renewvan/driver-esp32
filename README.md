@@ -13,22 +13,28 @@ the relay is
 [ADR 0013](https://github.com/renewvan/hub/blob/main/docs/adr/0013-writable-relay-and-its-wire-contract.md)
 and `schema/relay.schema.json` in `renewvan/hub`.
 
-## What a variant is
+## What a variant is, and the Driver key
 
-A variant is **one firmware image for one board, which is one Driver**. Its name is its Driver key
-(the `driver` field of its manifest, the `<key>` of `renewvan/<key>/info` and `renewvan/<key>/health`, and
-the `driver` published with each of its entities). The variant name, the manifest file stem and the firmware
-file stem are the same string, and CI enforces it. An ESP32 runs one image, so each physical board is one
-Driver with one key, with its own retained info, its own health and its own last-will.
+A variant is **one firmware image for one kind of board**. Its name is the stem shared by its
+`firmware/<variant>.yaml` and `manifests/<variant>.json`, and CI enforces that every firmware has its manifest
+and every manifest its firmware. It also names the ESPHome node (`renewvan-<variant>`) and project
+(`renewvan.driver-esp32-<variant>`).
 
-The key of `esp32-16x-relay` is unchanged by this layout, so nothing on the wire moved. The name
-`driver-relay` is deliberately left free for a later Pi-wired driver.
+The **Driver key is repo-wide: `esp32`**, the repo name minus `driver-`. Every manifest says `"driver": "esp32"`
+(CI enforces it), and every variant publishes `renewvan/esp32/info` and `renewvan/esp32/health`, and its entities'
+retained `driver` is `"esp32"`. The variant is not on the wire. The consequences, accepted by the owner while
+there is a single board:
 
-**Two identical boards cannot run side by side yet.** They would be two Drivers needing two keys, but nothing
-here lets a build override a variant's key, and a second key would not be enough on its own: the relay's entity
-ids (`relay_01` to `relay_16`, topics `renewvan/relay/<id>/...`) are fixed by the firmware, so a second relay
-board would publish over the first board's retained state. Supporting it needs a build-time key and channel-id
-override; it is not implemented and not tested, so do not flash the same variant onto two boards.
+- **One retained info and one health topic for the whole Driver.** Every board shares the one last-will on
+  `renewvan/esp32/health`, so one board dying marks the whole Driver offline, and a board connecting after another
+  overwrites that board's retained info.
+- **A second kind of board needs the key reconsidered** (a key per variant, or a repo split) before it is
+  flashed: today a second variant would clash with the first on these topics.
+- **Two identical boards cannot run side by side**, for the same reason, and because the relay's entity ids
+  (`relay_01` to `relay_16`, topics `renewvan/relay/<id>/...`) are fixed by the firmware: a second relay board would
+  publish over the first board's retained state. There is no build-time override for either; it is not implemented.
+
+The name `driver-relay` is deliberately left free for a later Pi-wired driver.
 
 ## Layout
 
@@ -42,20 +48,20 @@ firmware/secrets.yaml       a symlink to ../secrets.yaml (ESPHome looks secrets 
 ```
 
 `manifests/` is the list of variants: CI, the release build and every script derive them from it
-(`python3 scripts/variants.py list`; `variants.py check` verifies every manifest has `driver` equal to its file
-stem and its `firmware/<variant>.yaml`, and every firmware has its manifest).
+(`python3 scripts/variants.py list`; `variants.py check` verifies every manifest has `driver` equal to the
+repo-wide key `esp32` and its `firmware/<variant>.yaml`, and every firmware has its manifest).
 
 `packages/base.yaml` holds the van-bus connect chain, in this order on every MQTT connect: (1) the variant's
 retained entity state, (2) retained Driver info, (3) retained `online`. Step (1) is the variant's
 `publish_retained_state` script, so the order is one chain and not several `on_connect` entries (whose order
-is undefined). A variant provides `device_name`, `friendly_name` and `fallback_ap_ssid` substitutions and that
+is undefined). A variant provides `variant`, `device_name`, `friendly_name` and `fallback_ap_ssid` substitutions and that
 script; the Driver fields come from its manifest.
 
 ## Adding a variant
 
-1. `manifests/<variant>.json`: `driver` (equal to `<variant>`), `product`, `source`, `publishes`, and
+1. `manifests/<variant>.json`: `driver` (always `esp32`, the repo-wide key: read "What a variant is, and the Driver key" first), `product`, `source`, `publishes`, and
    optionally `manufacturer` and `homepage`. No `version` or `board_serial`.
-2. `firmware/<variant>.yaml`: the `device_name`, `friendly_name` and `fallback_ap_ssid` substitutions, the
+2. `firmware/<variant>.yaml`: the `variant` (equal to `<variant>`), `device_name`, `friendly_name` and `fallback_ap_ssid` substitutions, the
    `esp32:` board, its hardware and entities, a `publish_retained_state` script (publishing each entity's
    retained `driver`, state and name; an entity-less variant leaves it with no actions), and
    `packages: base: !include ../packages/base.yaml`. Copy `firmware/esp32-16x-relay.yaml` as the model.
@@ -120,7 +126,7 @@ renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reu
 
 ## Driver info and health
 
-Each variant appears on the dashboard's Driver page like every other Driver. The static fields live in
+The `esp32` Driver appears on the dashboard's Driver page like every other Driver. The static fields live in
 `manifests/<variant>.json`, the single source. It must not contain `version` or `board_serial`. Optional fields
 (`manufacturer`, `homepage`) are omitted from the info when empty.
 `scripts/manifest_substitutions.py <variant>` turns it into the build's substitutions, for both the flash
@@ -142,8 +148,7 @@ then fails if:
 
 - the action's reported project version differs from the CI value, or
 - the resolved configuration (`esphome config`) still contains an unexpanded `$placeholder`, or
-- the resolved configuration is not the variant's (project name `renewvan.driver-esp32-<variant>`, health
-  topic `renewvan/<variant>/health`), or
+- the resolved configuration is not the variant's (project name `renewvan.driver-esp32-<variant>`, node name `renewvan-<variant>`) or does not use the repo's health topic `renewvan/esp32/health`, or
 - for the relay, the `publish_retained_state` script and the `packages:` list name different channels.
 
 The placeholder check exists because ESPHome exits 0 on an undeclared substitution.
@@ -160,8 +165,8 @@ and `hub`'s deployment manifest references this repo's flash instructions.
 
 16-channel switched-load relay driver (lights, a water pump, a fridge, a heater, an inverter enable) on an
 ESP32-WROOM with two chained SN74HC595 shift registers. Entrypoint `firmware/esp32-16x-relay.yaml`, manifest
-`manifests/esp32-16x-relay.json`, key `esp32-16x-relay`: it publishes `renewvan/esp32-16x-relay/info` and
-`renewvan/esp32-16x-relay/health`.
+`manifests/esp32-16x-relay.json`, Driver key `esp32`: it publishes `renewvan/esp32/info` and
+`renewvan/esp32/health`.
 
 ### Hardware
 
@@ -186,7 +191,7 @@ Per channel `relay_01` to `relay_16`:
 | ------------------------------ | -------- | ----------------------------------------------------------- |
 | `renewvan/relay/<id>/state`    | yes      | JSON `true` / `false`, published after the output changed   |
 | `renewvan/relay/<id>/name`     | yes      | JSON string, only once a name has been set                  |
-| `renewvan/relay/<id>/driver`   | yes      | JSON string `"esp32-16x-relay"`, the owning Driver, always  |
+| `renewvan/relay/<id>/driver`   | yes      | JSON string `"esp32"`, the owning Driver, always            |
 | `renewvan/relay/<id>/set`      | no       | JSON `true` or `false` only. There is no toggle.            |
 | `renewvan/relay/<id>/name/set` | no       | JSON string, 1 to 63 bytes (bytes, so non-ASCII is shorter) |
 
@@ -267,7 +272,7 @@ manual:
    during boot. Repeat across an OTA update and a pulled power lead.
 2. Confirm there is **no fifteen-minute reboot** with no client connected.
 3. Watch `mosquitto_sub -h <broker> -v 'renewvan/#'` while the board boots: the sixteen `state`
-   topics (each with its `driver` = `"esp32-16x-relay"`), then `renewvan/esp32-16x-relay/info`, then `renewvan/esp32-16x-relay/health` = `online`.
+   topics (each with its `driver` = `"esp32"`), then `renewvan/esp32/info`, then `renewvan/esp32/health` = `online`.
    The info carries `"ip"`: confirm it is the address your router's DHCP table shows for the
    board, and that it also reads on the dashboard under Settings › Drivers › ESP32 16x relay.
 4. `mosquitto_pub -t renewvan/relay/relay_01/set -m true` switches channel 1 and `state` becomes

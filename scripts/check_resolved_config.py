@@ -10,8 +10,9 @@ Fails when:
   * the resolved `esphome.project.version` differs from --expected-version;
   * the version the build action reported differs from --expected-version;
   * the resolved configuration is not the --variant's: its project name is not
-    `renewvan.driver-esp32-<variant>` or its health topic is not `renewvan/<variant>/health`
-    (a build stamped with another variant's manifest).
+    `renewvan.driver-esp32-<variant>`, or its node name is not `renewvan-<variant>`;
+  * the resolved health topic is not the repo's one Driver key (`renewvan/esp32/health`,
+    variants.DRIVER_KEY): a build stamped with another repo's manifest.
 
 usage: check_resolved_config.py RESOLVED_YAML --variant V --expected-version V --reported-version V
 """
@@ -20,12 +21,15 @@ import argparse
 import re
 import sys
 
+import variants
+
 # Same shape ESPHome itself treats as a substitution (`$name` or `${...}`).
 PLACEHOLDER = re.compile(r"\$\{[^}\n]*\}|\$[A-Za-z_][A-Za-z0-9_]*")
 PROJECT_NAME = re.compile(
     r"^esphome:\n(?:[ ]{2}.*\n)*?[ ]{2}project:\n(?:[ ]{4}.*\n)*?[ ]{4}name:[ ]*(.*?)[ ]*$",
     re.MULTILINE,
 )
+NODE_NAME = re.compile(r"^esphome:\n(?:[ ]{2}.*\n)*?[ ]{2}name:[ ]*(.*?)[ ]*$", re.MULTILINE)
 PROJECT_VERSION = re.compile(
     r"^esphome:\n(?:[ ]{2}.*\n)*?[ ]{2}project:\n(?:[ ]{4}.*\n)*?[ ]{4}version:[ ]*(.*?)[ ]*$",
     re.MULTILINE,
@@ -53,8 +57,15 @@ def check(resolved, variant, expected, reported):
             f"expected 'renewvan.driver-esp32-{variant}'"
         )
 
-    if not re.search(rf"^[ ]+topic:[ ]*renewvan/{re.escape(variant)}/health[ ]*$", resolved, re.MULTILINE):
-        problems.append(f"resolved configuration never uses the health topic renewvan/{variant}/health")
+    node = NODE_NAME.search(resolved)
+    if node is None or node.group(1) != f"renewvan-{variant}":
+        problems.append(
+            f"resolved esphome.name is '{node.group(1) if node else None}', expected 'renewvan-{variant}'"
+        )
+
+    health = f"renewvan/{variants.DRIVER_KEY}/health"
+    if not re.search(rf"^[ ]+topic:[ ]*{re.escape(health)}[ ]*$", resolved, re.MULTILINE):
+        problems.append(f"resolved configuration never uses the health topic {health}")
 
     if reported != expected:
         problems.append(
