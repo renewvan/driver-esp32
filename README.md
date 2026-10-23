@@ -162,6 +162,11 @@ The device appears on the dashboard's Device page like every other Device. The s
 script and CI. `board_serial` is the board's MAC in the form `AA:BB:CC:DD:EE:FF`, so it can be
 compared with the label on the board.
 
+`ip` is the IPv4 address DHCP gave the board, so the dashboard can show where to reach it (for the
+OTA update, or to find it on the router). It is read when the info is published, so it is as fresh
+as the board's last (re)connect to the broker, and it is omitted, never `0.0.0.0`, while the board
+has no address. Reserve the address on your router if you want it to stay put.
+
 ## Acceptance (on the board, before it goes in the van)
 
 CI validates the YAML and the version stamp. Nothing in CI can exercise the board, so these are
@@ -172,6 +177,8 @@ manual:
 2. Confirm there is **no fifteen-minute reboot** with no client connected.
 3. Watch `mosquitto_sub -h <broker> -v 'renewvan/#'` while the board boots: the sixteen `state`
    topics, then `renewvan/esp32-relay/info`, then `renewvan/esp32-relay/health` = `online`.
+   The info carries `"ip"`: confirm it is the address your router's DHCP table shows for the
+   board, and that it also reads on the dashboard under Settings › Devices › ESP32 relay.
 4. `mosquitto_pub -t renewvan/relay/relay_01/set -m true` switches channel 1 and `state` becomes
    `true` afterwards; `-m false` switches it off.
 5. Publish `'"Water pump"'` to `renewvan/relay/relay_03/name/set` and confirm the retained `name`;

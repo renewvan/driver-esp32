@@ -1,7 +1,7 @@
 {
-  "device": "esp32-relay",
-  "product": "ESP32 16-channel relay board",
-  "source": "ESP32 with two chained SN74HC595 shift registers",
+  "device": "esp32-16x-relay",
+  "product": "ESP32-WROOM-E 16-channel relay board",
+  "source": "ESP32-WROOM-E",
   "publishes": ["relay"],
   "manufacturer": "renewvan",
   "homepage": "https://github.com/renewvan/driver-esp32-relay"
