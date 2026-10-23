@@ -32,5 +32,5 @@ if [[ ${#manifest_args[@]} -eq 0 ]]; then
   exit 1
 fi
 
-echo "Flashing esp32-relay-driver.yaml as version: $version" >&2
-exec esphome -s version "$version" "${manifest_args[@]}" run esp32-x16-relay-driver.yaml "$@"
+echo "Flashing esp32-16x-relay-driver.yaml as version: $version" >&2
+exec esphome -s version "$version" "${manifest_args[@]}" run esp32-16x-relay-driver.yaml "$@"

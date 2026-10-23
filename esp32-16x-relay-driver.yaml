@@ -1,4 +1,4 @@
-# driver-esp32-x16-relay: 16-channel switched-load relay device (ESP32-WROOM + two chained SN74HC595).
+# driver-esp32-16x-relay: 16-channel switched-load relay device (ESP32-WROOM + two chained SN74HC595).
 #
 # The wire contract is docs/adr/0013-writable-relay-and-its-wire-contract.md in renewvan/hub
 # and schema/relay.schema.json. In short, per channel `relay_01` .. `relay_16`:
@@ -33,18 +33,18 @@
 # ESPHome only warns on an undeclared substitution and ships the literal "${version}"
 # otherwise, so removing it turns a missing build argument into a silent bad version.
 substitutions:
-  device_name: renewvan-esp32-x16-relay
+  device_name: renewvan-esp32-16x-relay
   version: dev
   manufacturer: ""
   homepage: ""
 
 esphome:
   name: ${device_name}
-  friendly_name: Renewvan ESP32 x16 Relay Device
+  friendly_name: Renewvan ESP32 16x Relay Device
   # Exposes the stamped version as esphome.project.version so the CI build action
   # reports it (`project-version` output) and the guard can compare it.
   project:
-    name: renewvan.driver-esp32-x16-relay
+    name: renewvan.driver-esp32-16x-relay
     version: ${version}
 
 esp32:
@@ -65,7 +65,7 @@ wifi:
 
   # Fallback AP for initial/recovery config if the configured network is unreachable.
   ap:
-    ssid: "Renewvan ESP32 x16 Fallback"
+    ssid: "Renewvan ESP32 16x Fallback"
     password: !secret wifi_ap_fallback_password
 
 captive_portal:

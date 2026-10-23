@@ -13,12 +13,12 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "manifest_substitutions.py"
 
 FULL = {
-    "device": "esp32-relay",
+    "device": "esp32-16x-relay",
     "product": "ESP32 16-channel relay board",
     "source": "ESP32 with two chained SN74HC595 shift registers",
     "publishes": ["relay"],
     "manufacturer": "renewvan",
-    "homepage": "https://github.com/renewvan/driver-esp32-relay",
+    "homepage": "https://github.com/renewvan/driver-esp32-16x-relay",
 }
 
 
@@ -44,12 +44,12 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             lines(result),
             {
-                "device": "esp32-relay",
+                "device": "esp32-16x-relay",
                 "product": "ESP32 16-channel relay board",
                 "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
                 "manufacturer": "renewvan",
-                "homepage": "https://github.com/renewvan/driver-esp32-relay",
+                "homepage": "https://github.com/renewvan/driver-esp32-16x-relay",
             },
         )
 
@@ -90,12 +90,12 @@ class ManifestSubstitutions(unittest.TestCase):
         self.assertEqual(
             dict(zip(tokens[1::3], tokens[2::3])),
             {
-                "device": "esp32-relay",
+                "device": "esp32-16x-relay",
                 "product": "ESP32 16-channel relay board",
                 "source": "ESP32 with two chained SN74HC595 shift registers",
                 "publishes": '[\\"relay\\"]',
                 "manufacturer": "renewvan",
-                "homepage": "https://github.com/renewvan/driver-esp32-relay",
+                "homepage": "https://github.com/renewvan/driver-esp32-16x-relay",
             },
         )
 
@@ -140,9 +140,9 @@ class ManifestSubstitutions(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         values = lines(result)
-        self.assertEqual(values["device"], "esp32-relay")
+        self.assertEqual(values["device"], "esp32-16x-relay")
         self.assertEqual(values["publishes"], '[\\"relay\\"]')
-        self.assertEqual(values["homepage"], "https://github.com/renewvan/driver-esp32-relay")
+        self.assertEqual(values["homepage"], "https://github.com/renewvan/driver-esp32-16x-relay")
 
 
 if __name__ == "__main__":

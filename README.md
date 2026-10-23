@@ -1,4 +1,4 @@
-# driver-esp32-relay
+# driver-esp32-16x-relay
 
 ESPHome YAML config for the 16-channel switched-load relay device (lights, a water pump, a fridge,
 a heater, an inverter enable) on an ESP32-WROOM with two chained SN74HC595 shift registers. No
@@ -8,8 +8,8 @@ contract is
 [ADR 0013](https://github.com/renewvan/hub/blob/main/docs/adr/0013-writable-relay-and-its-wire-contract.md)
 and `schema/relay.schema.json` in `renewvan/hub`.
 
-The device key is `esp32-relay`, so it publishes `renewvan/esp32-relay/info` and
-`renewvan/esp32-relay/health`. The name `driver-relay` is deliberately left free for a later
+The device key is `esp32-16x-relay`, so it publishes `renewvan/esp32-16x-relay/info` and
+`renewvan/esp32-16x-relay/health`. The name `driver-relay` is deliberately left free for a later
 Pi-wired device.
 
 ## Hardware
@@ -90,7 +90,7 @@ acceptance step, below.
 
 ## Customizing channels
 
-Sixteen channels, one line each in `esp32-relay-driver.yaml` under `packages:`:
+Sixteen channels, one line each in `esp32-16x-relay-driver.yaml` under `packages:`:
 
 ```yaml
 relay_03: !include { file: pkg/relay-channel.yaml, vars: { ch: relay_03, bit: 2 } }
@@ -101,7 +101,7 @@ above 15, a duplicate `bit` and a duplicate `ch`; it does not notice a skipped `
 set here: publish a `name/set` (the dashboard's Settings does this), and the name is stored on the
 board. Changing a channel's `ch` orphans its stored name.
 
-The connect chain in `esp32-relay-driver.yaml` lists every `ch` once, so the sixteen states are
+The connect chain in `esp32-16x-relay-driver.yaml` lists every `ch` once, so the sixteen states are
 published in one ordered chain. Keep the two in step if you add or rename a channel; CI fails on a
 mismatch.
 
@@ -113,11 +113,11 @@ cp secrets.yaml.example secrets.yaml   # fill in your WiFi/MQTT/OTA values
 scripts/flash.sh                       # first flash: connect via USB
 ```
 
-Always flash with `scripts/flash.sh`, not `esphome run esp32-relay-driver.yaml` directly. The script
+Always flash with `scripts/flash.sh`, not `esphome run esp32-16x-relay-driver.yaml` directly. The script
 stamps the firmware version from your checkout and merges `manifest.json` into the build, and
 passes any extra arguments through to `esphome run` (e.g. `scripts/flash.sh --device /dev/ttyUSB0`).
 
-A bare `esphome run esp32-relay-driver.yaml` fails, on purpose: `manifest.json` is the only source of
+A bare `esphome run esp32-16x-relay-driver.yaml` fails, on purpose: `manifest.json` is the only source of
 the device's identity (`device`, `product`, `source`, `publishes`), so the YAML does not declare them.
 ESPHome only warns about an undeclared substitution and would otherwise use the literal `${device}` as
 an MQTT topic.
@@ -141,7 +141,7 @@ An untagged tree still flashes, with a hash version; the script never refuses.
 `scripts/flash.sh --print-version` prints the stamp without building.
 
 The firmware itself defaults the version to `dev` (`substitutions.version` in
-`esp32-relay-driver.yaml`). **Keep that default.** ESPHome only warns about an undeclared substitution
+`esp32-16x-relay-driver.yaml`). **Keep that default.** ESPHome only warns about an undeclared substitution
 and then ships the literal `${version}` as the version, so without a default a missing build argument
 would silently publish a placeholder. CI additionally fails if the stamp is lost.
 
@@ -176,9 +176,9 @@ manual:
    during boot. Repeat across an OTA update and a pulled power lead.
 2. Confirm there is **no fifteen-minute reboot** with no client connected.
 3. Watch `mosquitto_sub -h <broker> -v 'renewvan/#'` while the board boots: the sixteen `state`
-   topics, then `renewvan/esp32-relay/info`, then `renewvan/esp32-relay/health` = `online`.
+   topics, then `renewvan/esp32-16x-relay/info`, then `renewvan/esp32-16x-relay/health` = `online`.
    The info carries `"ip"`: confirm it is the address your router's DHCP table shows for the
-   board, and that it also reads on the dashboard under Settings › Devices › ESP32 relay.
+   board, and that it also reads on the dashboard under Settings › Devices › ESP32 16x relay.
 4. `mosquitto_pub -t renewvan/relay/relay_01/set -m true` switches channel 1 and `state` becomes
    `true` afterwards; `-m false` switches it off.
 5. Publish `'"Water pump"'` to `renewvan/relay/relay_03/name/set` and confirm the retained `name`;
@@ -188,7 +188,7 @@ manual:
 
 ## CI
 
-`.github/workflows/validate.yml` runs the script tests, then builds `esp32-relay-driver.yaml` with
+`.github/workflows/validate.yml` runs the script tests, then builds `esp32-16x-relay-driver.yaml` with
 `esphome/build-action` (pinned by commit SHA, with ESPHome pinned) against the placeholder
 `secrets.yaml.example`. It passes a CI version (`ci-<short sha>`) and the manifest as substitutions,
 then fails if:

@@ -33,7 +33,7 @@ jobs:
     uses: renewvan/hub/.github/workflows/release.yml@eb9ad8a4b29519bbbd1c33b1092cdb7719628ec9
     with:
       kind: firmware
-      esphome-yaml: esp32-relay-driver.yaml
+      esphome-yaml: esp32-16x-relay-driver.yaml
       esphome-version: "2026.9.1"
       bump: ${{ inputs.bump }}
       version: ${{ inputs.version }}
