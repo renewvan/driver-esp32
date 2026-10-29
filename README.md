@@ -91,6 +91,15 @@ warns about an undeclared substitution and would otherwise use the literal `${dr
 Subsequent updates can go over WiFi (run the script again once the device has joined your network)
 using the OTA password in `secrets.yaml`.
 
+### Flashing with Claude Code
+
+The `flash-esp32` skill (`skills/flash-esp32/SKILL.md` in `renewvan/skills`) walks through the same steps
+interactively: it finds the variant, asks for the serial port or OTA address, fills `secrets.yaml` from
+`secrets.yaml.example` (it never prints the contents), runs the pre-flight checks, flashes with
+`scripts/flash.sh`, and verifies the board on the MQTT bus. Run it from this checkout and ask Claude to
+"flash the esp32". It drives `scripts/flash.sh` and does not replace it; if the skill and this README disagree,
+this README wins.
+
 ## Version stamp
 
 The firmware version is `git describe --tags --always --dirty` of the checkout you flash from, and
