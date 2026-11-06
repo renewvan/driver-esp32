@@ -5,16 +5,23 @@
 #
 # A variant MUST provide:
 #   substitutions  variant           the variant's name (its file stem), for the ESPHome project name
-#                  device_name       the ESPHome node name (hostname for OTA / mDNS)
+#                  device_name       the ESPHome node name (hostname for OTA / mDNS, max 31
+#                                    characters): `renewvan-esp32-${board}`
 #                  friendly_name     the human name ESPHome shows
 #                  fallback_ap_ssid  the recovery access point's SSID (max 32 bytes)
 #   script         publish_retained_state   publishes the variant's retained entity identity
 #                  and state (see the connect chain below); an entity-less variant leaves it empty
-#   from the build `driver`, `product`, `source`, `publishes` (+ optional `manufacturer`,
-#   `homepage`): the variant's manifests/<variant>.json, merged in as substitutions by
-#   scripts/manifest_substitutions.py (scripts/flash.sh and CI both call it).
-# They are deliberately not declared here: there is one source, and a build that skips the
-# manifest fails the guard on the unexpanded placeholder instead of publishing a copy.
+#   from the build  `board`, `driver`: the board's name and its Driver key `esp32-<board>`,
+#                   from `scripts/flash.sh <variant> --board <name>` (CI passes a fixed board name).
+#                   Composed by scripts/manifest_substitutions.py, validated by
+#                   scripts/variants.py (slug, no trailing -<digits>).
+#   from the build  `product`, `source`, `publishes` (+ optional `manufacturer`, `homepage`):
+#                   the variant's manifests/<variant>.json, merged in by the same script
+#                   (scripts/flash.sh and CI both call it). The manifest describes the kind only
+#                   and may not carry a `driver`.
+# They are deliberately not declared here: there is one source, and a build that skips them
+# fails the guard on the unexpanded placeholder instead of publishing a copy (a build with no
+# board would otherwise publish under a topic literally named `esp32-${board}`).
 #
 # The optional fields are omitted from the manifest when empty, so they are declared here as
 # empty and left out of the published info.
@@ -33,8 +40,8 @@ esphome:
   # Exposes the stamped version as esphome.project.version so the CI build action
   # reports it (`project-version` output) and the guard can compare it. One project per
   # variant, `renewvan.driver-esp32-<variant>`: ESPHome allows exactly one dot in the name, so
-  # the variant is appended with a hyphen rather than as a third segment. (`driver` is the
-  # repo-wide key `esp32`, the same for every variant, so it cannot name the project.)
+  # the variant is appended with a hyphen rather than as a third segment. The project is the
+  # kind of firmware, so it names the variant, never the board.
   project:
     name: renewvan.driver-esp32-${variant}
     version: ${version}
@@ -67,11 +74,12 @@ ota:
 # The van bus, the same Mosquitto every other driver publishes to.
 #
 # Driver info/health (renewvan/<driver>/info, renewvan/<driver>/health):
-# - `driver` is the repo-wide key `esp32` (manifests/*.json, checked by scripts/variants.py), not
-#   the variant. Every board of every variant therefore shares ONE retained info and ONE
-#   health topic with ONE last-will: one board dying marks the whole Driver offline, and a
-#   second kind of board would overwrite the first one's retained info. Accepted by the owner
-#   for a single board; a second board type needs the key reconsidered.
+# - `driver` is `esp32-<board>`: every board is its own Driver, with its own retained info and
+#   health and its own last-will, so a dead board marks only its own Driver `offline`. Two builds
+#   of one variant with different `--board` names share no topic. The variant is not a Driver;
+#   it only appears as the informational `variant` field of info (consumers must not branch on it).
+#   The name is compiled in: reflashing with the same name is the same Driver, renaming a board is
+#   a new Driver and the old retained topics must be cleared by hand.
 # - topic_prefix: null drops ESPHome's own <device>/status, <device>/debug and discovery topics.
 # - discover_ip: false drops the esphome/discover and esphome/ping subscriptions.
 # - The built-in birth message is disabled (`birth_message:` empty). ESPHome would send
@@ -123,6 +131,7 @@ mqtt:
           json::JsonBuilder builder;
           JsonObject root = builder.root();
           root["driver"] = "${driver}";
+          root["variant"] = "${variant}";
           root["product"] = "${product}";
           root["source"] = "${source}";
           // `publishes` is a JSON array literal from the variant's manifest.

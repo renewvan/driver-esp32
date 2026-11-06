@@ -1,8 +1,9 @@
 # One relay channel on a direct ESP32 GPIO. The twin of relay-channel.yaml (which drives a
 # shift register); everything but the `pin` is identical. Included once per channel from
 # firmware/esp32-8x-relay.yaml:
-#   relay_01: !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_01, gpio: GPIO32 } }
-# vars: ch = the channel id on the bus (renewvan/relay/<ch>/...), gpio = the relay's ESP32 pin.
+#   relay_01: !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_01, nn: "01", gpio: GPIO32 } }
+# vars: ch = the channel key inside this firmware (ESPHome ids and the connect-chain table; never on the bus),
+# nn = its zero-padded channel number: the bus id is `${board}-${nn}` (renewvan/relay/<board>-<nn>/...), gpio = the relay's ESP32 pin.
 #
 # This file holds only what is per channel and can be merged by id: the switch, the restoring
 # name, and the two subscriptions. It deliberately holds NO on_connect entry: the order of
@@ -10,6 +11,7 @@
 # `publish_retained_state` script in firmware/esp32-8x-relay.yaml, which is step (1) of the one
 # connect chain in base.yaml (states, then info, then online).
 #
+# `board` comes from the build (flash.sh --board), see packages/base.yaml.
 # It needs `mqtt_client` from packages/base.yaml (the firmware includes both).
 
 globals:
@@ -34,7 +36,7 @@ switch:
       # State is published only after the physical output changed (it is the device's truth,
       # not an echo of a command).
       - mqtt.publish:
-          topic: renewvan/relay/${ch}/state
+          topic: renewvan/relay/${board}-${nn}/state
           payload: !lambda 'return x ? "true" : "false";'
           retain: true
 
@@ -42,7 +44,7 @@ mqtt:
   on_message:
     # Command: unretained JSON true / false only. No payload filter, so this is one
     # subscription per topic, not one per payload.
-    - topic: renewvan/relay/${ch}/set
+    - topic: renewvan/relay/${board}-${nn}/set
       then:
         - lambda: |-
             if (x == "true") {
@@ -50,21 +52,21 @@ mqtt:
             } else if (x == "false") {
               id(relay_${ch}).turn_off();
             } else {
-              ESP_LOGW("relay", "${ch}: set is not JSON true/false, ignored");
+              ESP_LOGW("relay", "${board}-${nn}: set is not JSON true/false, ignored");
             }
     # Rename: a JSON string on a fixed topic. The trigger hands the action only the raw
     # payload (quotes included), so it is decoded here. on_json_message would lose the value.
-    - topic: renewvan/relay/${ch}/name/set
+    - topic: renewvan/relay/${board}-${nn}/name/set
       then:
         - lambda: |-
             JsonDocument doc;
             if (deserializeJson(doc, x) != DeserializationError::Ok || !doc.is<const char *>()) {
-              ESP_LOGW("relay", "${ch}: name/set is not a JSON string, ignored");
+              ESP_LOGW("relay", "${board}-${nn}: name/set is not a JSON string, ignored");
               return;
             }
             std::string v = doc.as<std::string>();
             if (v.empty() || v.size() > 63) {
-              ESP_LOGW("relay", "${ch}: name rejected (empty or over 63 bytes)");
+              ESP_LOGW("relay", "${board}-${nn}: name rejected (empty or over 63 bytes)");
               return;
             }
             id(name_${ch}) = v;
@@ -72,4 +74,4 @@ mqtt:
             out.set(v);
             std::string payload;
             serializeJson(out, payload);
-            id(mqtt_client).publish("renewvan/relay/${ch}/name", payload, 0, true);
+            id(mqtt_client).publish("renewvan/relay/${board}-${nn}/name", payload, 0, true);

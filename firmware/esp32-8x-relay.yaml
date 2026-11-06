@@ -3,7 +3,7 @@
 #
 # Same wire contract and safety rules as esp32-16x-relay (see that file's header and
 # docs/adr/0013-writable-relay-and-its-wire-contract.md in renewvan/hub), for channels
-# `relay_01` .. `relay_08`:
+# `<board>-01` .. `<board>-08`:
 #   renewvan/relay/<id>/state | name | driver   retained; set and name/set are unretained
 # Every channel is OFF after any reset (restore_mode ALWAYS_OFF); relays HOLD their state while
 # WiFi or the broker is down; no `api:` and no `web_server:` (the relay contract forbids both).
@@ -13,16 +13,16 @@
 # pin: ESP32 samples it at reset (high selects 1.8 V flash), so the board's driver must hold it
 # low; confirm on the bench before connecting any load.
 #
-# One board per van: the Driver key (`esp32`) and the relay ids are shared with
-# esp32-16x-relay, so the two variants must never run on the same bus (README, "What a
-# variant is, and the Driver key").
-#
-# Static Driver fields come ONLY from manifests/esp32-8x-relay.json (see packages/base.yaml).
+# Any number of boards, of either variant, can share a van: each is its own Driver
+# (`esp32-<board>`) with its own relay ids (`<board>-<nn>`) (README, "What a variant, a board and
+# a Driver are"). The board name comes from `scripts/flash.sh esp32-8x-relay --board <name>`;
+# the static fields of the kind come ONLY from manifests/esp32-8x-relay.json (see
+# packages/base.yaml). `relay_<nn>` is only the channel's key inside this file, never on the bus.
 substitutions:
   variant: esp32-8x-relay
-  device_name: renewvan-esp32-8x-relay
-  friendly_name: Renewvan ESP32 8x Relay Driver
-  fallback_ap_ssid: "Renewvan ESP32 8x Fallback"
+  device_name: renewvan-esp32-${board}
+  friendly_name: Renewvan ${driver}
+  fallback_ap_ssid: "Renewvan ${driver}"
 
 esp32:
   board: esp32dev
@@ -34,18 +34,18 @@ esp32:
 script:
   - id: publish_retained_state
     then:
-      # Every channel's retained driver, state, and its retained name when it has one.
+      # Every channel's retained driver (this board's Driver key), state, and its retained name when it has one.
       - lambda: |-
           struct Channel { const char *id; switch_::Switch *sw; std::string *name; };
           const Channel channels[] = {
-            {"relay_01", id(relay_relay_01), &id(name_relay_01)},
-            {"relay_02", id(relay_relay_02), &id(name_relay_02)},
-            {"relay_03", id(relay_relay_03), &id(name_relay_03)},
-            {"relay_04", id(relay_relay_04), &id(name_relay_04)},
-            {"relay_05", id(relay_relay_05), &id(name_relay_05)},
-            {"relay_06", id(relay_relay_06), &id(name_relay_06)},
-            {"relay_07", id(relay_relay_07), &id(name_relay_07)},
-            {"relay_08", id(relay_relay_08), &id(name_relay_08)},
+            {"${board}-01", id(relay_relay_01), &id(name_relay_01)},
+            {"${board}-02", id(relay_relay_02), &id(name_relay_02)},
+            {"${board}-03", id(relay_relay_03), &id(name_relay_03)},
+            {"${board}-04", id(relay_relay_04), &id(name_relay_04)},
+            {"${board}-05", id(relay_relay_05), &id(name_relay_05)},
+            {"${board}-06", id(relay_relay_06), &id(name_relay_06)},
+            {"${board}-07", id(relay_relay_07), &id(name_relay_07)},
+            {"${board}-08", id(relay_relay_08), &id(name_relay_08)},
           };
           for (const Channel &c : channels) {
             std::string base = std::string("renewvan/relay/") + c.id;
@@ -70,18 +70,42 @@ script:
 packages:
   base: !include ../packages/base.yaml
   relay_01:
-    !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_01, gpio: GPIO32 } }
+    !include {
+      file: ../packages/relay-channel-gpio.yaml,
+      vars: { ch: relay_01, nn: "01", gpio: GPIO32 },
+    }
   relay_02:
-    !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_02, gpio: GPIO33 } }
+    !include {
+      file: ../packages/relay-channel-gpio.yaml,
+      vars: { ch: relay_02, nn: "02", gpio: GPIO33 },
+    }
   relay_03:
-    !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_03, gpio: GPIO25 } }
+    !include {
+      file: ../packages/relay-channel-gpio.yaml,
+      vars: { ch: relay_03, nn: "03", gpio: GPIO25 },
+    }
   relay_04:
-    !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_04, gpio: GPIO26 } }
+    !include {
+      file: ../packages/relay-channel-gpio.yaml,
+      vars: { ch: relay_04, nn: "04", gpio: GPIO26 },
+    }
   relay_05:
-    !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_05, gpio: GPIO27 } }
+    !include {
+      file: ../packages/relay-channel-gpio.yaml,
+      vars: { ch: relay_05, nn: "05", gpio: GPIO27 },
+    }
   relay_06:
-    !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_06, gpio: GPIO14 } }
+    !include {
+      file: ../packages/relay-channel-gpio.yaml,
+      vars: { ch: relay_06, nn: "06", gpio: GPIO14 },
+    }
   relay_07:
-    !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_07, gpio: GPIO12 } }
+    !include {
+      file: ../packages/relay-channel-gpio.yaml,
+      vars: { ch: relay_07, nn: "07", gpio: GPIO12 },
+    }
   relay_08:
-    !include { file: ../packages/relay-channel-gpio.yaml, vars: { ch: relay_08, gpio: GPIO13 } }
+    !include {
+      file: ../packages/relay-channel-gpio.yaml,
+      vars: { ch: relay_08, nn: "08", gpio: GPIO13 },
+    }
