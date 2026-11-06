@@ -4,3 +4,6 @@
 __pycache__/
 secrets.yaml.*
 !secrets.yaml.example
+
+# Local agent scratch/planning notes (wayfinder maps, tickets): never committed
+.scratch/
