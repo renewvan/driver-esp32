@@ -8,8 +8,12 @@ are empty are omitted, never emitted blank.
 Values are escaped for a C++ string literal (`\\` and `"`): ESPHome pastes substitutions
 textually, and the firmware places them between double quotes inside a lambda.
 
-usage: manifest_substitutions.py VARIANT|MANIFEST_PATH [--esphome-args]
-       manifest_substitutions.py esp32-16x-relay
+--board NAME is required: it adds `board` and `driver` (= esp32-NAME, variants.driver_key), the
+board's identity, composed here and nowhere else. The manifest itself may not carry a `driver`.
+Without --board the script fails (exit 2, nothing on stdout) rather than build placeholders.
+
+usage: manifest_substitutions.py VARIANT|MANIFEST_PATH --board NAME [--esphome-args]
+       manifest_substitutions.py esp32-16x-relay --board front
        manifest_substitutions.py manifests/esp32-16x-relay.json
 """
 
@@ -19,10 +23,10 @@ import sys
 
 import variants
 
-REQUIRED = ("driver", "product", "source", "publishes")
+REQUIRED = ("product", "source", "publishes")
 OPTIONAL = ("manufacturer", "homepage")
-# Stamped from the checkout / read from the board, never hand-written.
-FORBIDDEN = ("version", "board_serial")
+# Stamped from the checkout / read from the board / composed from --board, never hand-written.
+FORBIDDEN = ("version", "board_serial", "driver")
 
 
 def flatten(manifest):
@@ -45,6 +49,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("manifest", help="a variant name, or the path of its manifest")
     parser.add_argument(
+        "--board", required=True, help="the board's name (required): adds `board` and `driver` (esp32-<name>)"
+    )
+    parser.add_argument(
         "--esphome-args",
         action="store_true",
         help="emit NUL-separated `-s KEY VALUE` triples for `esphome` instead of key=value lines",
@@ -61,13 +68,16 @@ def main():
 
     try:
         values = flatten(manifest)
-        # Asked for by name, the manifest must carry this repo's one Driver key: a manifest
-        # copied from another repo would publish under that Driver's topics.
-        if variant is not None and manifest["driver"] != variants.DRIVER_KEY:
-            raise ValueError(f"driver is '{manifest['driver']}', expected '{variants.DRIVER_KEY}'")
     except ValueError as err:
         print(f"{path}: {err}", file=sys.stderr)
         return 1
+
+    problems = variants.validate_board(args.board)
+    if problems:
+        print("; ".join(problems), file=sys.stderr)
+        return 1
+    values["board"] = args.board
+    values["driver"] = variants.driver_key(args.board)
 
     if args.esphome_args:
         for key, value in values.items():

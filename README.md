@@ -1,7 +1,7 @@
 # driver-esp32
 
 Every ESP32 firmware the Renewvan van ships, in one repo. Each firmware is a **variant**: ESPHome YAML (no
-custom firmware) for one kind of board, flashed once per physical board. Today there are two (flash or release one of them; never both on the same bus):
+custom firmware) for one kind of board, flashed once per physical board. Today there are two. A van can have any number of boards of either variant, each named when flashed and each its own Driver on the bus:
 
 | Variant           | Board                                                      | Publishes |
 | ----------------- | ---------------------------------------------------------- | --------- |
@@ -14,26 +14,32 @@ the relay is
 [ADR 0013](https://github.com/renewvan/hub/blob/main/docs/adr/0013-writable-relay-and-its-wire-contract.md)
 and `schema/relay.schema.json` in `renewvan/hub`.
 
-## What a variant is, and the Driver key
+## What a variant, a board and a Driver are
 
-A variant is **one firmware image for one kind of board**. Its name is the stem shared by its
+A **variant** is **one firmware image for one kind of board**. Its name is the stem shared by its
 `firmware/<variant>.yaml` and `manifests/<variant>.json`, and CI enforces that every firmware has its manifest
-and every manifest its firmware. It also names the ESPHome node (`renewvan-<variant>`) and project
-(`renewvan.driver-esp32-<variant>`).
+and every manifest its firmware. It names the ESPHome project (`renewvan.driver-esp32-<variant>`) and is never a
+Driver. A **board** is one physical unit running a variant, named by its owner once, when flashing it
+(`scripts/flash.sh <variant> --board <name>`). A van can have any number of boards, including several of the same
+variant (see `GLOSSARY.md`).
 
-The **Driver key is repo-wide: `esp32`**, the repo name minus `driver-`. Every manifest says `"driver": "esp32"`
-(CI enforces it), and every variant publishes `renewvan/esp32/info` and `renewvan/esp32/health`, and its entities'
-retained `driver` is `"esp32"`. The variant is not on the wire. The consequences, accepted by the owner while
-there is a single board:
+**Every board is its own Driver, with the key `esp32-<name>`.** The name is compiled into the firmware, so
+reflashing with the same name is the same Driver. Everything on the bus derives from it:
 
-- **One retained info and one health topic for the whole Driver.** Every board shares the one last-will on
-  `renewvan/esp32/health`, so one board dying marks the whole Driver offline, and a board connecting after another
-  overwrites that board's retained info.
-- **A second kind of board needs the key reconsidered** (a key per variant, or a repo split) before it is
-  flashed: today a second variant would clash with the first on these topics.
-- **Two identical boards cannot run side by side**, for the same reason, and because the relay's entity ids
-  (`relay_01` to `relay_16`, topics `renewvan/relay/<id>/...`) are fixed by the firmware: a second relay board would
-  publish over the first board's retained state. There is no build-time override for either; it is not implemented.
+- `renewvan/esp32-<name>/info` and `renewvan/esp32-<name>/health`, retained, with the board's own last-will: a dead
+  board marks only its own Driver `offline`. `info` carries an optional, informational `variant` (consumers must
+  not branch on it).
+- relay ids `<name>-<nn>` (`front-01` to `front-16`, topics `renewvan/relay/<id>/...`), `<nn>` zero-padded and
+  positional, and each id's retained `driver` is `"esp32-<name>"`. Two boards cannot share a name, so they cannot
+  share an id.
+- the ESPHome node name `renewvan-esp32-<name>` (hostname for OTA) and the recovery access point `Renewvan esp32-<name>`.
+
+**The name is validated before anything is built** (`scripts/variants.py board <name>`, called by `flash.sh`): a
+slug (lowercase letters and digits, starting with a letter, words joined by single hyphens), at most 16 characters
+(the node name is limited to 31), and it must not end in `-<digits>`, so a relay id is never ambiguous with a board
+name. Renaming a board is a new Driver: the old retained `renewvan/esp32-<old>/*` and `renewvan/relay/<old>-<nn>/*`
+topics must be cleared by hand (no tool does it). Nothing checks that a name is unused: two boards flashed with
+the same name will overwrite each other's retained state.
 
 The name `driver-relay` is deliberately left free for a later Pi-wired driver.
 
@@ -41,7 +47,7 @@ The name `driver-relay` is deliberately left free for a later Pi-wired driver.
 
 ```
 firmware/<variant>.yaml     the ESPHome entrypoint of one variant: board, hardware, entities
-manifests/<variant>.json    its static Driver fields (the single source, see "Driver info and health")
+manifests/<variant>.json    the static fields of the kind (the single source, see "Driver info and health"); no `driver`
 packages/base.yaml          shared by every variant: WiFi, OTA, logger, captive portal, MQTT, Driver info/health
 packages/relay-channel.yaml one relay channel, included once per channel by the relay variant
 scripts/                    flash.sh, manifest_substitutions.py, variants.py, and the CI guards
@@ -49,22 +55,23 @@ firmware/secrets.yaml       a symlink to ../secrets.yaml (ESPHome looks secrets 
 ```
 
 `manifests/` is the list of variants: CI, the release build and every script derive them from it
-(`python3 scripts/variants.py list`; `variants.py check` verifies every manifest has `driver` equal to the
-repo-wide key `esp32` and its `firmware/<variant>.yaml`, and every firmware has its manifest).
+(`python3 scripts/variants.py list`; `variants.py check` verifies every manifest has its `firmware/<variant>.yaml`
+and no `driver` key, and every firmware has its manifest).
 
 `packages/base.yaml` holds the van-bus connect chain, in this order on every MQTT connect: (1) the variant's
 retained entity state, (2) retained Driver info, (3) retained `online`. Step (1) is the variant's
 `publish_retained_state` script, so the order is one chain and not several `on_connect` entries (whose order
-is undefined). A variant provides `variant`, `device_name`, `friendly_name` and `fallback_ap_ssid` substitutions and that
-script; the Driver fields come from its manifest.
+is undefined). A variant provides `variant`, `device_name` (`renewvan-esp32-${board}`), `friendly_name` and
+`fallback_ap_ssid` substitutions and that script; `board` and `driver` come from `flash.sh --board`, the other Driver
+fields from its manifest.
 
 ## Adding a variant
 
-1. `manifests/<variant>.json`: `driver` (always `esp32`, the repo-wide key: read "What a variant is, and the Driver key" first), `product`, `source`, `publishes`, and
-   optionally `manufacturer` and `homepage`. No `version` or `board_serial`.
-2. `firmware/<variant>.yaml`: the `variant` (equal to `<variant>`), `device_name`, `friendly_name` and `fallback_ap_ssid` substitutions, the
+1. `manifests/<variant>.json`: `product`, `source`, `publishes`, and optionally `manufacturer` and `homepage`. No
+   `driver` (the key is `esp32-<board>`, composed at flash time), `version` or `board_serial`.
+2. `firmware/<variant>.yaml`: the `variant` (equal to `<variant>`), `device_name` (`renewvan-esp32-${board}`), `friendly_name` and `fallback_ap_ssid` substitutions, the
    `esp32:` board, its hardware and entities, a `publish_retained_state` script (publishing each entity's
-   retained `driver`, state and name; an entity-less variant leaves it with no actions), and
+   retained `driver` (`${driver}`), state and name, under the bus id `${board}-<nn>`; an entity-less variant leaves it with no actions), and
    `packages: base: !include ../packages/base.yaml`. Copy `firmware/esp32-16x-relay.yaml` as the model.
 3. `packages/<name>.yaml` for anything repeated within the variant (the relay's `relay-channel.yaml` is the
    example); anything a second variant also needs belongs in `packages/base.yaml` instead.
@@ -77,17 +84,20 @@ script; the Driver fields come from its manifest.
 ```bash
 pip install esphome
 cp secrets.yaml.example secrets.yaml   # fill in your WiFi/MQTT/OTA values
-scripts/flash.sh esp32-16x-relay       # first flash: connect via USB
+scripts/flash.sh esp32-16x-relay --board front   # first flash: connect via USB
 scripts/flash.sh --list                # the variants
 ```
 
 Always flash with `scripts/flash.sh <variant>`, not `esphome run firmware/<variant>.yaml` directly. The
-script stamps the firmware version from your checkout and merges `manifests/<variant>.json` into the build, and
-passes any extra arguments through to `esphome run` (e.g. `scripts/flash.sh esp32-16x-relay --device /dev/ttyUSB0`).
+script stamps the firmware version from your checkout, compiles in the board name (`--board <name>` is required and
+validated, see above) and merges `manifests/<variant>.json` into the build, and passes any other arguments through
+to `esphome run` (e.g. `scripts/flash.sh esp32-16x-relay --board front --device /dev/ttyUSB0`). To update a
+board over WiFi, flash again with the same `--board` name.
 
-A bare `esphome run firmware/<variant>.yaml` fails, on purpose: the manifest is the only source of the
-Driver's identity (`driver`, `product`, `source`, `publishes`), so the YAML does not declare them. ESPHome only
-warns about an undeclared substitution and would otherwise use the literal `${driver}` as an MQTT topic.
+A bare `esphome run firmware/<variant>.yaml` fails, on purpose: the board name and the manifest are the only
+sources of the Driver's identity (`board`, `driver`, `product`, `source`, `publishes`), so the YAML does not declare
+them. ESPHome only warns about an undeclared substitution and would otherwise use the literal `${driver}` as an
+MQTT topic; CI's resolved-config guard fails on that.
 
 Subsequent updates can go over WiFi (run the script again once the device has joined your network)
 using the OTA password in `secrets.yaml`.
@@ -133,14 +143,18 @@ variant) as a gate. Then flash from that tag with `scripts/flash.sh <variant>`. 
 MQTT and the OTA password are compiled in from `secrets.yaml`, so a CI-built binary contains placeholders and
 cannot be flashed onto a van (and would publish a known OTA password). The process is shared by every
 renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`).
+The release workflow's pinned hub build step calls `scripts/manifest_substitutions.py` without `--board`, which now
+fails loudly instead of building placeholders until hub passes a board name (hub#161, ticket #12).
 
 ## Driver info and health
 
-The `esp32` Driver appears on the dashboard's Driver page like every other Driver. The static fields live in
-`manifests/<variant>.json`, the single source. It must not contain `version` or `board_serial`. Optional fields
+Each board appears as its own Driver (`esp32-<name>`) on the dashboard's Driver page like every other Driver. The
+static fields of the kind live in `manifests/<variant>.json`, the single source. It must not contain `driver`,
+`version` or `board_serial`. Optional fields
 (`manufacturer`, `homepage`) are omitted from the info when empty.
-`scripts/manifest_substitutions.py <variant>` turns it into the build's substitutions, for both the flash
-script and CI. `board_serial` is the board's MAC in the form `AA:BB:CC:DD:EE:FF`, so it can be
+`scripts/manifest_substitutions.py <variant> --board <name>` (`--board` is required; without it the script fails rather than build placeholders) turns it, with the board's `board` and `driver`, into
+the build's substitutions, for both the flash script and CI. `info` also carries `variant` (the firmware kind,
+informational). `board_serial` is the board's MAC in the form `AA:BB:CC:DD:EE:FF`, so it can be
 compared with the label on the board.
 
 `ip` is the IPv4 address DHCP gave the board, so the dashboard can show where to reach it (for the
@@ -153,12 +167,12 @@ has no address. Reserve the address on your router if you want it to stay put.
 `.github/workflows/validate.yml` runs the script tests and `variants.py check`, then, **for every variant
 found under `manifests/`** (a matrix built from the directory), builds `firmware/<variant>.yaml` with
 `esphome/build-action` (pinned by commit SHA, with ESPHome pinned) against the placeholder
-`secrets.yaml.example`. It passes a CI version (`ci-<short sha>`) and the variant's manifest as substitutions,
-then fails if:
+`secrets.yaml.example`. It passes a CI version (`ci-<short sha>`), the variant's manifest and a fixed board name
+(`ci-board`, `CI_BOARD` in the workflow, since nothing built there is flashed) as substitutions, then fails if:
 
 - the action's reported project version differs from the CI value, or
 - the resolved configuration (`esphome config`) still contains an unexpanded `$placeholder`, or
-- the resolved configuration is not the variant's (project name `renewvan.driver-esp32-<variant>`, node name `renewvan-<variant>`) or does not use the repo's health topic `renewvan/esp32/health`, or
+- the resolved configuration is not the variant's (project name `renewvan.driver-esp32-<variant>`, node name `renewvan-esp32-<board>`) or does not use the board's health topic `renewvan/esp32-<board>/health`, or
 - for the relay, the `publish_retained_state` script and the `packages:` list name different channels.
 
 The placeholder check exists because ESPHome exits 0 on an undeclared substitution.
@@ -175,26 +189,28 @@ and `hub`'s deployment manifest references this repo's flash instructions.
 
 8-channel relay driver for the LC Technology LC-Relay-ESP-8R-D5 (ESP32-E, one relay per GPIO, no shift
 register). Entrypoint `firmware/esp32-8x-relay.yaml`, manifest `manifests/esp32-8x-relay.json`, channel package
-`packages/relay-channel-gpio.yaml`. Same wire contract, Driver key (`esp32`) and safety rules as the 16x variant,
-with channels `relay_01` to `relay_08`; choose it with `scripts/flash.sh esp32-8x-relay`.
+`packages/relay-channel-gpio.yaml`. Same wire contract and safety rules as the 16x variant,
+with channels `<board>-01` to `<board>-08` (the channel keys `relay_01` to `relay_08` below exist only inside the
+firmware); choose it with `scripts/flash.sh esp32-8x-relay --board <name>`.
 
-| Channel    | GPIO | Channel    | GPIO               |
-| ---------- | ---- | ---------- | ------------------ |
-| `relay_01` | 32   | `relay_05` | 27                 |
-| `relay_02` | 33   | `relay_06` | 14                 |
-| `relay_03` | 25   | `relay_07` | 12 (strapping pin) |
-| `relay_04` | 26   | `relay_08` | 13                 |
+| Channel key | GPIO | Channel key | GPIO               |
+| ----------- | ---- | ----------- | ------------------ |
+| `relay_01`  | 32   | `relay_05`  | 27                 |
+| `relay_02`  | 33   | `relay_06`  | 14                 |
+| `relay_03`  | 25   | `relay_07`  | 12 (strapping pin) |
+| `relay_04`  | 26   | `relay_08`  | 13                 |
 
 Pins come from the [ESPHome device page](https://devices.esphome.io/devices/esp32e-relay-x8/). Relay polarity
 (assumed active-high, not inverted) and the GPIO12 boot behaviour are **unverified on the bench**: test with no load
-connected first. It shares the Driver key and relay ids with the 16x board, so only one board per bus.
+connected first. Each board is its own Driver with its own ids, so it can share a van with any other board, of this
+variant or the 16x one.
 
 ## Variant: esp32-16x-relay
 
 16-channel switched-load relay driver (lights, a water pump, a fridge, a heater, an inverter enable) on an
 ESP32-WROOM with two chained SN74HC595 shift registers. Entrypoint `firmware/esp32-16x-relay.yaml`, manifest
-`manifests/esp32-16x-relay.json`, Driver key `esp32`: it publishes `renewvan/esp32/info` and
-`renewvan/esp32/health`.
+`manifests/esp32-16x-relay.json`. Flashed as `--board <name>` it is the Driver `esp32-<name>`: it publishes
+`renewvan/esp32-<name>/info` and `renewvan/esp32-<name>/health`.
 
 ### Hardware
 
@@ -207,19 +223,19 @@ ESP32-WROOM and two chained SN74HC595 shift registers driving sixteen relay outp
 | Latch (`RCLK`)       | GPIO12 | Strapping pin. **No external pull-up** (GPIO12 high selects 1.8 V). |
 | Output enable (`OE`) | GPIO5  | Strapping pin. External pull-up **required**, see below.            |
 
-Channel `relay_01` is shift-register output 0 (`QA` of the register wired to the ESP32 data line)
-and `relay_16` is output 15. The chain order is read from the ESPHome source, not from the wiring;
+Channel 01 (`<board>-01`, key `relay_01`) is shift-register output 0 (`QA` of the register wired to the ESP32 data
+line) and channel 16 is output 15. The chain order is read from the ESPHome source, not from the wiring;
 confirm it on the bench.
 
 ### Wire contract
 
-Per channel `relay_01` to `relay_16`:
+Per channel `<board>-01` to `<board>-16` (`<id>` below):
 
 | Topic                          | Retained | Payload                                                     |
 | ------------------------------ | -------- | ----------------------------------------------------------- |
 | `renewvan/relay/<id>/state`    | yes      | JSON `true` / `false`, published after the output changed   |
 | `renewvan/relay/<id>/name`     | yes      | JSON string, only once a name has been set                  |
-| `renewvan/relay/<id>/driver`   | yes      | JSON string `"esp32"`, the owning Driver, always            |
+| `renewvan/relay/<id>/driver`   | yes      | JSON string `"esp32-<board>"`, the owning Driver, always    |
 | `renewvan/relay/<id>/set`      | no       | JSON `true` or `false` only. There is no toggle.            |
 | `renewvan/relay/<id>/name/set` | no       | JSON string, 1 to 63 bytes (bytes, so non-ASCII is shorter) |
 
@@ -278,15 +294,17 @@ acceptance step, below.
 Sixteen channels, one line each in `firmware/esp32-16x-relay.yaml` under `packages:`:
 
 ```yaml
-relay_03: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_03, bit: 2 } }
+relay_03:
+  !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_03, nn: "03", bit: 2 } }
 ```
 
-`ch` is the id on the bus and `bit` is the shift-register output 0 to 15. ESPHome rejects a `bit`
+`ch` is the channel's key inside the firmware (ESPHome ids and the connect-chain table, never on the bus), `nn` its
+zero-padded number (the bus id is `<board>-<nn>`; `check_relay_channels.py` requires `ch` to be `relay_<nn>`), and `bit` is the shift-register output 0 to 15. ESPHome rejects a `bit`
 above 15, a duplicate `bit` and a duplicate `ch`; it does not notice a skipped `bit`. Labels are not
 set here: publish a `name/set` (the dashboard's Settings does this), and the name is stored on the
 board. Changing a channel's `ch` orphans its stored name.
 
-The `publish_retained_state` script in `firmware/esp32-16x-relay.yaml` lists every `ch` once. It is step (1)
+The `publish_retained_state` script in `firmware/esp32-16x-relay.yaml` lists every channel once (as `${board}-<nn>`). It is step (1)
 of the one connect chain in `packages/base.yaml`, so the sixteen states are published before the Driver info and
 `online`. Keep the two lists in step if you add or rename a channel; `scripts/check_relay_channels.py` (run by CI)
 fails on a mismatch.
@@ -300,12 +318,13 @@ manual:
    during boot. Repeat across an OTA update and a pulled power lead.
 2. Confirm there is **no fifteen-minute reboot** with no client connected.
 3. Watch `mosquitto_sub -h <broker> -v 'renewvan/#'` while the board boots: the sixteen `state`
-   topics (each with its `driver` = `"esp32"`), then `renewvan/esp32/info`, then `renewvan/esp32/health` = `online`.
+   topics (each with its `driver` = `"esp32-<name>"`), then `renewvan/esp32-<name>/info` (with `variant`), then
+   `renewvan/esp32-<name>/health` = `online`.
    The info carries `"ip"`: confirm it is the address your router's DHCP table shows for the
    board, and that it also reads on the dashboard under Settings › Drivers › ESP32 16x relay.
-4. `mosquitto_pub -t renewvan/relay/relay_01/set -m true` switches channel 1 and `state` becomes
+4. `mosquitto_pub -t renewvan/relay/<name>-01/set -m true` switches channel 1 and `state` becomes
    `true` afterwards; `-m false` switches it off.
-5. Publish `'"Water pump"'` to `renewvan/relay/relay_03/name/set` and confirm the retained `name`;
+5. Publish `'"Water pump"'` to `renewvan/relay/<name>-03/name/set` and confirm the retained `name`;
    power-cycle after 60 seconds and confirm it persists.
-6. Unplug the board's network: `health` becomes `offline`, the retained `info` stays, and the relays
-   hold their state.
+6. Unplug the board's network: its `health` becomes `offline`, the retained `info` stays, and the relays
+   hold their state. With a second board on the bus, only the unplugged board's Driver goes `offline`.

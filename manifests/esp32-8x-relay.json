@@ -1,5 +1,4 @@
 {
-  "driver": "esp32",
   "product": "ESP32-E 8-channel relay (LC-Relay-ESP-8R-D5)",
   "source": "ESP32-E",
   "publishes": ["relay"],

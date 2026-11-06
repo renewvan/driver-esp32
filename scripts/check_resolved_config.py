@@ -9,12 +9,12 @@ Fails when:
   * the resolved configuration still contains an unexpanded `$name` / `${name}`;
   * the resolved `esphome.project.version` differs from --expected-version;
   * the version the build action reported differs from --expected-version;
-  * the resolved configuration is not the --variant's: its project name is not
-    `renewvan.driver-esp32-<variant>`, or its node name is not `renewvan-<variant>`;
-  * the resolved health topic is not the repo's one Driver key (`renewvan/esp32/health`,
-    variants.DRIVER_KEY): a build stamped with another repo's manifest.
+  * the resolved configuration is not the --variant's and --board's: its project name is not
+    `renewvan.driver-esp32-<variant>`, or its node name is not `renewvan-esp32-<board>`;
+  * the resolved health topic is not the board's Driver key (`renewvan/esp32-<board>/health`,
+    variants.driver_key). A build with no board keeps a literal `${board}`, caught as a placeholder.
 
-usage: check_resolved_config.py RESOLVED_YAML --variant V --expected-version V --reported-version V
+usage: check_resolved_config.py RESOLVED_YAML --variant V --board B --expected-version V --reported-version V
 """
 
 import argparse
@@ -36,7 +36,7 @@ PROJECT_VERSION = re.compile(
 )
 
 
-def check(resolved, variant, expected, reported):
+def check(resolved, variant, board, expected, reported):
     problems = []
 
     for match in sorted(set(PLACEHOLDER.findall(resolved))):
@@ -58,12 +58,12 @@ def check(resolved, variant, expected, reported):
         )
 
     node = NODE_NAME.search(resolved)
-    if node is None or node.group(1) != f"renewvan-{variant}":
+    if node is None or node.group(1) != f"renewvan-esp32-{board}":
         problems.append(
-            f"resolved esphome.name is '{node.group(1) if node else None}', expected 'renewvan-{variant}'"
+            f"resolved esphome.name is '{node.group(1) if node else None}', expected 'renewvan-esp32-{board}'"
         )
 
-    health = f"renewvan/{variants.DRIVER_KEY}/health"
+    health = f"renewvan/{variants.driver_key(board)}/health"
     if not re.search(rf"^[ ]+topic:[ ]*{re.escape(health)}[ ]*$", resolved, re.MULTILINE):
         problems.append(f"resolved configuration never uses the health topic {health}")
 
@@ -79,6 +79,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("resolved")
     parser.add_argument("--variant", required=True)
+    parser.add_argument("--board", required=True)
     parser.add_argument("--expected-version", required=True)
     parser.add_argument("--reported-version", required=True)
     args = parser.parse_args()
@@ -86,7 +87,7 @@ def main():
     with open(args.resolved, encoding="utf-8") as handle:
         resolved = handle.read()
 
-    problems = check(resolved, args.variant, args.expected_version, args.reported_version)
+    problems = check(resolved, args.variant, args.board, args.expected_version, args.reported_version)
     for problem in problems:
         print(f"error: {problem}", file=sys.stderr)
     return 1 if problems else 0

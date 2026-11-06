@@ -2,10 +2,10 @@
 # chained SN74HC595).
 #
 # The wire contract is docs/adr/0013-writable-relay-and-its-wire-contract.md in renewvan/hub
-# and schema/relay.schema.json. In short, per channel `relay_01` .. `relay_16`:
+# and schema/relay.schema.json. In short, per channel `<board>-01` .. `<board>-16`:
 #   renewvan/relay/<id>/state     retained JSON true/false, published AFTER the output changed
 #   renewvan/relay/<id>/name      retained JSON string, optional (the only label on the wire)
-#   renewvan/relay/<id>/driver    retained JSON string, always "esp32" (the owning Driver, the repo-wide key)
+#   renewvan/relay/<id>/driver    retained JSON string, always "esp32-<board>" (the owning Driver)
 #   renewvan/relay/<id>/set       unretained JSON true / false (no toggle)
 #   renewvan/relay/<id>/name/set  unretained JSON string, 1..63 bytes
 #
@@ -22,16 +22,20 @@
 #     outputs stay high-impedance until firmware drives it. ESPHome drives nothing before
 #     setup(), so a glitch exists whatever the restore mode. See README.md, "Variant: esp32-16x-relay", "Acceptance".
 #
-# Static Driver fields (driver, product, source, publishes, and the optional manufacturer and
-# homepage) come ONLY from manifests/esp32-16x-relay.json, merged in as substitutions by
-# scripts/manifest_substitutions.py; see packages/base.yaml. Everything shared with other
+# The board's identity (`board`, and the Driver key `driver` = esp32-<board>) comes from
+# `scripts/flash.sh esp32-16x-relay --board <name>`; the static fields of the kind (product, source,
+# publishes, and the optional manufacturer and homepage) come ONLY from
+# manifests/esp32-16x-relay.json. Both are merged in as substitutions by
+# scripts/manifest_substitutions.py; see packages/base.yaml. Relay ids on the bus are
+# `<board>-<nn>`; `relay_<nn>` is only the channel's key inside this file (ESPHome ids, the
+# connect-chain table and `ch` below), never on the bus. Everything shared with other
 # variants (WiFi, OTA, MQTT connection, Driver info/health) is packages/base.yaml; this file is
 # the board, its channels, and the relay's step of the connect chain.
 substitutions:
   variant: esp32-16x-relay
-  device_name: renewvan-esp32-16x-relay
-  friendly_name: Renewvan ESP32 16x Relay Driver
-  fallback_ap_ssid: "Renewvan ESP32 16x Fallback"
+  device_name: renewvan-esp32-${board}
+  friendly_name: Renewvan ${driver}
+  fallback_ap_ssid: "Renewvan ${driver}"
 
 esp32:
   board: esp32dev
@@ -55,26 +59,26 @@ sn74hc595:
 script:
   - id: publish_retained_state
     then:
-      # Every channel's retained driver, state, and its retained name when it has one.
+      # Every channel's retained driver (this board's Driver key), state, and its retained name when it has one.
       - lambda: |-
           struct Channel { const char *id; switch_::Switch *sw; std::string *name; };
           const Channel channels[] = {
-            {"relay_01", id(relay_relay_01), &id(name_relay_01)},
-            {"relay_02", id(relay_relay_02), &id(name_relay_02)},
-            {"relay_03", id(relay_relay_03), &id(name_relay_03)},
-            {"relay_04", id(relay_relay_04), &id(name_relay_04)},
-            {"relay_05", id(relay_relay_05), &id(name_relay_05)},
-            {"relay_06", id(relay_relay_06), &id(name_relay_06)},
-            {"relay_07", id(relay_relay_07), &id(name_relay_07)},
-            {"relay_08", id(relay_relay_08), &id(name_relay_08)},
-            {"relay_09", id(relay_relay_09), &id(name_relay_09)},
-            {"relay_10", id(relay_relay_10), &id(name_relay_10)},
-            {"relay_11", id(relay_relay_11), &id(name_relay_11)},
-            {"relay_12", id(relay_relay_12), &id(name_relay_12)},
-            {"relay_13", id(relay_relay_13), &id(name_relay_13)},
-            {"relay_14", id(relay_relay_14), &id(name_relay_14)},
-            {"relay_15", id(relay_relay_15), &id(name_relay_15)},
-            {"relay_16", id(relay_relay_16), &id(name_relay_16)},
+            {"${board}-01", id(relay_relay_01), &id(name_relay_01)},
+            {"${board}-02", id(relay_relay_02), &id(name_relay_02)},
+            {"${board}-03", id(relay_relay_03), &id(name_relay_03)},
+            {"${board}-04", id(relay_relay_04), &id(name_relay_04)},
+            {"${board}-05", id(relay_relay_05), &id(name_relay_05)},
+            {"${board}-06", id(relay_relay_06), &id(name_relay_06)},
+            {"${board}-07", id(relay_relay_07), &id(name_relay_07)},
+            {"${board}-08", id(relay_relay_08), &id(name_relay_08)},
+            {"${board}-09", id(relay_relay_09), &id(name_relay_09)},
+            {"${board}-10", id(relay_relay_10), &id(name_relay_10)},
+            {"${board}-11", id(relay_relay_11), &id(name_relay_11)},
+            {"${board}-12", id(relay_relay_12), &id(name_relay_12)},
+            {"${board}-13", id(relay_relay_13), &id(name_relay_13)},
+            {"${board}-14", id(relay_relay_14), &id(name_relay_14)},
+            {"${board}-15", id(relay_relay_15), &id(name_relay_15)},
+            {"${board}-16", id(relay_relay_16), &id(name_relay_16)},
           };
           for (const Channel &c : channels) {
             std::string base = std::string("renewvan/relay/") + c.id;
@@ -100,19 +104,35 @@ script:
 # a channel (scripts/check_relay_channels.py fails CI on a mismatch).
 packages:
   base: !include ../packages/base.yaml
-  relay_01: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_01, bit: 0 } }
-  relay_02: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_02, bit: 1 } }
-  relay_03: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_03, bit: 2 } }
-  relay_04: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_04, bit: 3 } }
-  relay_05: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_05, bit: 4 } }
-  relay_06: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_06, bit: 5 } }
-  relay_07: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_07, bit: 6 } }
-  relay_08: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_08, bit: 7 } }
-  relay_09: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_09, bit: 8 } }
-  relay_10: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_10, bit: 9 } }
-  relay_11: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_11, bit: 10 } }
-  relay_12: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_12, bit: 11 } }
-  relay_13: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_13, bit: 12 } }
-  relay_14: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_14, bit: 13 } }
-  relay_15: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_15, bit: 14 } }
-  relay_16: !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_16, bit: 15 } }
+  relay_01:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_01, nn: "01", bit: 0 } }
+  relay_02:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_02, nn: "02", bit: 1 } }
+  relay_03:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_03, nn: "03", bit: 2 } }
+  relay_04:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_04, nn: "04", bit: 3 } }
+  relay_05:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_05, nn: "05", bit: 4 } }
+  relay_06:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_06, nn: "06", bit: 5 } }
+  relay_07:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_07, nn: "07", bit: 6 } }
+  relay_08:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_08, nn: "08", bit: 7 } }
+  relay_09:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_09, nn: "09", bit: 8 } }
+  relay_10:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_10, nn: "10", bit: 9 } }
+  relay_11:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_11, nn: "11", bit: 10 } }
+  relay_12:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_12, nn: "12", bit: 11 } }
+  relay_13:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_13, nn: "13", bit: 12 } }
+  relay_14:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_14, nn: "14", bit: 13 } }
+  relay_15:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_15, nn: "15", bit: 14 } }
+  relay_16:
+    !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_16, nn: "16", bit: 15 } }

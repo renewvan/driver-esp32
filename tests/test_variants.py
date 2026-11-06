@@ -20,7 +20,6 @@ import manifest_substitutions  # noqa: E402
 import variants  # noqa: E402
 
 MANIFEST = {
-    "driver": "esp32",
     "product": "Demo board",
     "source": "Demo",
     "publishes": ["temperature"],
@@ -55,15 +54,14 @@ class RepoVariants(unittest.TestCase):
     def test_the_repo_layout_is_sound(self):
         self.assertEqual(variants.check(), [])
 
-    def test_the_driver_key_is_the_repo_name_minus_driver_prefix(self):
-        self.assertEqual(variants.DRIVER_KEY, "esp32")
-        self.assertEqual(variants.DRIVER_KEY, ROOT.name.removeprefix("driver-"))
+    def test_the_driver_key_is_esp32_dash_board(self):
+        self.assertEqual(variants.driver_key("front"), "esp32-front")
 
-    def test_every_manifest_carries_the_repo_wide_driver_key_and_has_its_firmware(self):
+    def test_every_manifest_has_its_firmware_and_no_driver_key(self):
         for variant in variants.discover():
             with self.subTest(variant=variant):
                 manifest = json.loads(variants.manifest_path(variant).read_text())
-                self.assertEqual(manifest["driver"], variants.DRIVER_KEY)
+                self.assertNotIn("driver", manifest)
                 self.assertTrue(variants.firmware_path(variant).is_file())
 
     def test_every_manifest_flattens_for_the_build(self):
@@ -71,7 +69,7 @@ class RepoVariants(unittest.TestCase):
             with self.subTest(variant=variant):
                 manifest = json.loads(variants.manifest_path(variant).read_text())
                 values = manifest_substitutions.flatten(manifest)
-                self.assertEqual(values["driver"], variants.DRIVER_KEY)
+                self.assertNotIn("driver", values)
 
     def test_every_firmware_declares_the_identity_the_base_package_needs(self):
         # packages/base.yaml uses these and cannot default them: a variant that omits one
@@ -98,6 +96,44 @@ class RepoVariants(unittest.TestCase):
         self.assertEqual(result.stdout.count("\n"), 1)
 
 
+class BoardName(unittest.TestCase):
+    def board(self, name):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "board", name], capture_output=True, text=True
+        )
+
+    def test_slugs_are_accepted(self):
+        for name in ("front", "rear-van", "a1", "ci-board", "x-1a", "sixteenchars-abc"[:16]):
+            with self.subTest(name=name):
+                result = self.board(name)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_non_slugs_are_rejected_before_anything_is_built(self):
+        for name in ("", "Front", "1front", "front_", "front--x", "-front", "front-", "a b", "fr\u00f6nt", "esp32/x"):
+            with self.subTest(name=name):
+                result = self.board(name)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("slug", result.stderr)
+
+    def test_a_name_ending_in_dash_digits_is_rejected(self):
+        for name in ("front-1", "rear-16", "a-b-07"):
+            with self.subTest(name=name):
+                result = self.board(name)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("-<digits>", result.stderr)
+
+    def test_a_name_too_long_for_the_esphome_node_name_is_rejected(self):
+        # `renewvan-esp32-<board>` is the node name; ESPHome allows 31 characters.
+        self.assertEqual(self.board("a" * 16).returncode, 0)
+        result = self.board("a" * 17)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("16", result.stderr)
+
+    def test_validate_board_returns_the_problems(self):
+        self.assertEqual(variants.validate_board("front"), [])
+        self.assertTrue(variants.validate_board("front-1"))
+
+
 class Discovery(unittest.TestCase):
     def tree(self, **kwargs):
         tmp = tempfile.TemporaryDirectory()
@@ -119,22 +155,16 @@ class Discovery(unittest.TestCase):
         result = run("check", root)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_another_driver_key_fails_and_is_named(self):
-        root = self.tree(manifests={"demo-board": {**MANIFEST, "driver": "other"}}, firmware=["demo-board"])
-        result = run("check", root)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("manifests/demo-board.json", result.stderr)
-        self.assertIn("'other'", result.stderr)
-        self.assertIn("expected 'esp32'", result.stderr)
+    def test_a_driver_field_in_a_manifest_fails_and_is_named(self):
+        for driver in ("esp32", "other", "demo-board"):
+            with self.subTest(driver=driver):
+                root = self.tree(manifests={"demo-board": {**MANIFEST, "driver": driver}}, firmware=["demo-board"])
+                result = run("check", root)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("manifests/demo-board.json", result.stderr)
+                self.assertIn("'driver'", result.stderr)
 
-    def test_the_stem_as_driver_key_fails_because_the_key_is_repo_wide(self):
-        # The old key-per-variant convention: driver == file stem is now a violation.
-        root = self.tree(manifests={"demo-board": {**MANIFEST, "driver": "demo-board"}}, firmware=["demo-board"])
-        result = run("check", root)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("expected 'esp32'", result.stderr)
-
-    def test_two_variants_sharing_the_key_pass(self):
+    def test_two_variants_pass(self):
         root = self.tree(manifests={"a-board": MANIFEST, "b-board": MANIFEST}, firmware=["a-board", "b-board"])
         self.assertEqual(run("check", root).returncode, 0)
 

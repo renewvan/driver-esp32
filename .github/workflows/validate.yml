@@ -9,6 +9,10 @@ on:
 env:
   # Pinned: the action defaults to `latest`, which would change under us.
   ESPHOME_VERSION: "2026.9.1"
+  # Nothing built here is flashed, so there is no real board: a fixed valid name (a slug, not
+  # ending in -<digits>, see scripts/variants.py) stands in. Drop it from a build and the
+  # resolved-config guard fails on the unexpanded `${board}`.
+  CI_BOARD: ci-board
 
 jobs:
   scripts:
@@ -21,7 +25,7 @@ jobs:
       - name: Unit tests for the build scripts
         run: python3 -m unittest discover -s tests -v
 
-      # Every manifests/<variant>.json has driver == <variant> and its firmware/<variant>.yaml.
+      # Every manifests/<variant>.json has its firmware/<variant>.yaml, none carries a `driver`, and every firmware has its manifest.
       - name: Guard the variant layout
         run: python3 scripts/variants.py check
 
@@ -59,7 +63,7 @@ jobs:
             echo "version=${version}"
             echo "substitutions<<EOF"
             echo "version=${version}"
-            python3 scripts/manifest_substitutions.py "${VARIANT}"
+            python3 scripts/manifest_substitutions.py "${VARIANT}" --board "${CI_BOARD}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -83,14 +87,15 @@ jobs:
           manifest_args=()
           while IFS= read -r -d '' arg; do
             manifest_args+=("${arg}")
-          done < <(python3 scripts/manifest_substitutions.py "${VARIANT}" --esphome-args)
+          done < <(python3 scripts/manifest_substitutions.py "${VARIANT}" --board "${CI_BOARD}" --esphome-args)
           docker run --rm -v "$PWD":/config -w /config --user "$(id -u):$(id -g)" \
             --entrypoint esphome "ghcr.io/esphome/esphome:${ESPHOME_VERSION}" \
             -s version "${VERSION}" "${manifest_args[@]}" config "firmware/${VARIANT}.yaml" > resolved.yaml
 
-      - name: Guard the stamped version and the variant
+      - name: Guard the stamped version, the variant and the board
         run: |
           python3 scripts/check_resolved_config.py resolved.yaml \
             --variant "${{ matrix.variant }}" \
+            --board "${CI_BOARD}" \
             --expected-version "${{ steps.stamp.outputs.version }}" \
             --reported-version "${{ steps.build.outputs.project-version }}"

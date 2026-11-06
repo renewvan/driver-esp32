@@ -4,6 +4,7 @@ Fixtures are real `esphome config` output shapes: an undeclared substitution sur
 verbatim as `${name}` and `esphome config` still exits 0, so only this guard catches it.
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -18,10 +19,10 @@ import variants  # noqa: E402
 
 RESOLVED = """\
 substitutions:
-  device_name: renewvan-esp32-16x-relay
+  device_name: renewvan-esp32-front
   version: {version}
 esphome:
-  name: renewvan-esp32-16x-relay
+  name: renewvan-esp32-front
   project:
     name: renewvan.driver-esp32-esp32-16x-relay
     version: {version}
@@ -29,12 +30,12 @@ esphome:
 mqtt:
   broker: 192.168.1.10
   will_message:
-    topic: renewvan/esp32/health
+    topic: renewvan/esp32-front/health
     payload: offline
 """
 
 
-def check(resolved, expected_version="ci-1234abc", reported_version=None, variant="esp32-16x-relay"):
+def check(resolved, expected_version="ci-1234abc", reported_version=None, variant="esp32-16x-relay", board="front"):
     """Run the guard. `reported_version` is the build action's `project-version` output."""
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "resolved.yaml"
@@ -46,11 +47,36 @@ def check(resolved, expected_version="ci-1234abc", reported_version=None, varian
                 str(path),
                 "--variant",
                 variant,
+                "--board",
+                board,
                 "--expected-version",
                 expected_version,
                 "--reported-version",
                 expected_version if reported_version is None else reported_version,
             ],
+            capture_output=True,
+            text=True,
+        )
+
+
+def resolve(esphome, variant, board, tmp_root=None):
+    """Real `esphome config` for a variant and board, against a copy of the tree."""
+    with tempfile.TemporaryDirectory() as tmp:
+        args = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "manifest_substitutions.py"), variant, "--board", board, "--esphome-args"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split("\0")[:-1]
+        # Resolved against a copy of the tree, so the repo's real secrets are never read.
+        tree = Path(tmp) / "tree"
+        shutil.copytree(ROOT, tree, ignore=shutil.ignore_patterns(".git", ".esphome", "__pycache__", "secrets.yaml"))
+        shutil.copy(ROOT / "secrets.yaml.example", tree / "secrets.yaml")
+        (tree / "firmware" / "secrets.yaml").unlink(missing_ok=True)
+        (tree / "firmware" / "secrets.yaml").symlink_to("../secrets.yaml")
+        return subprocess.run(
+            [esphome, "-s", "version", "ci-test", *args, "config", f"firmware/{variant}.yaml"],
+            cwd=tree,
             capture_output=True,
             text=True,
         )
@@ -105,28 +131,57 @@ class ResolvedConfigGuard(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_resolved_config_of_another_variant_fails(self):
-        # The wrong manifest stamped into this variant's build: both names disagree.
+        # The wrong variant's build: the project name disagrees.
         result = check(RESOLVED.format(version="ci-1234abc"), variant="esp32-other")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("renewvan.driver-esp32-esp32-other", result.stderr)
-        self.assertIn("renewvan-esp32-other", result.stderr)
+
+    def test_resolved_config_of_another_board_fails(self):
+        result = check(RESOLVED.format(version="ci-1234abc"), board="rear")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("renewvan-esp32-rear", result.stderr)
+        self.assertIn("renewvan/esp32-rear/health", result.stderr)
+
+    def test_a_dropped_board_substitution_fails_on_the_surviving_placeholder(self):
+        resolved = RESOLVED.replace("renewvan-esp32-front", "renewvan-esp32-${{board}}").replace(
+            "esp32-front/health", "esp32-${{board}}/health"
+        )
+        result = check(resolved.format(version="ci-1234abc"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("${board}", result.stderr)
 
     def test_health_topic_of_another_driver_fails_even_with_the_right_project_name(self):
         resolved = RESOLVED.format(version="ci-1234abc").replace(
-            "renewvan/esp32/health", "renewvan/other/health"
+            "renewvan/esp32-front/health", "renewvan/other/health"
         )
         result = check(resolved)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("renewvan/esp32/health", result.stderr)
+        self.assertIn("renewvan/esp32-front/health", result.stderr)
 
-    def test_a_per_variant_health_topic_fails_because_the_driver_key_is_repo_wide(self):
-        # The old key-per-variant wiring: health under the variant's name, not under `esp32`.
+    def test_the_old_repo_wide_health_topic_fails(self):
         resolved = RESOLVED.format(version="ci-1234abc").replace(
-            "renewvan/esp32/health", "renewvan/esp32-16x-relay/health"
+            "renewvan/esp32-front/health", "renewvan/esp32/health"
         )
         result = check(resolved)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("renewvan/esp32/health", result.stderr)
+        self.assertIn("renewvan/esp32-front/health", result.stderr)
+
+    def test_two_boards_of_one_variant_resolve_to_disjoint_topics(self):
+        # Acceptance: different --board names give disjoint info/health/relay topics, observed in
+        # the real resolved firmware (skipped where ESPHome is absent).
+        esphome = shutil.which("esphome")
+        if esphome is None:
+            self.skipTest("esphome is not installed")
+        topics = {}
+        for board in ("front", "rear"):
+            resolved = resolve(esphome, "esp32-8x-relay", board)
+            self.assertEqual(resolved.returncode, 0, resolved.stdout + resolved.stderr)
+            topics[board] = set(re.findall(r"renewvan/(?:esp32-[a-z0-9-]+/(?:info|health)|relay/[a-z0-9-]+/[a-z/]+)", resolved.stdout))
+            self.assertIn(f"renewvan/esp32-{board}/info", topics[board])
+            self.assertIn(f"renewvan/relay/{board}-01/state", topics[board])
+            self.assertIn(f'"{board}-08"', resolved.stdout)  # the connect-chain table
+            self.assertIn(f'"\\"esp32-{board}\\""', resolved.stdout)  # the relay `driver` payload
+        self.assertEqual(topics["front"] & topics["rear"], set())
 
     def test_the_resolved_firmware_of_every_variant_passes_when_esphome_is_installed(self):
         # Real `esphome config` output, not a fixture: skipped where ESPHome is absent (CI
@@ -135,30 +190,22 @@ class ResolvedConfigGuard(unittest.TestCase):
         if esphome is None:
             self.skipTest("esphome is not installed")
         for variant in variants.discover():
-            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as tmp:
-                secrets = Path(tmp) / "secrets.yaml"
-                shutil.copy(ROOT / "secrets.yaml.example", secrets)
-                args = subprocess.run(
-                    [sys.executable, str(ROOT / "scripts" / "manifest_substitutions.py"), variant, "--esphome-args"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout.split("\0")[:-1]
-                # Resolved against a copy of the tree, so the repo's real secrets are never read.
-                tree = Path(tmp) / "tree"
-                shutil.copytree(ROOT, tree, ignore=shutil.ignore_patterns(".git", ".esphome", "__pycache__", "secrets.yaml"))
-                shutil.copy(secrets, tree / "secrets.yaml")
-                (tree / "firmware" / "secrets.yaml").symlink_to("../secrets.yaml")
-                resolved = subprocess.run(
-                    [esphome, "-s", "version", "ci-test", *args, "config", f"firmware/{variant}.yaml"],
-                    cwd=tree,
-                    capture_output=True,
-                    text=True,
-                )
+            with self.subTest(variant=variant):
+                resolved = resolve(esphome, variant, "ci-board")
                 self.assertEqual(resolved.returncode, 0, resolved.stdout + resolved.stderr)
-                result = check(resolved.stdout, expected_version="ci-test", variant=variant)
+                result = check(resolved.stdout, expected_version="ci-test", variant=variant, board="ci-board")
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_the_published_info_includes_the_variant_substitution(self):
+        # `info` carries the firmware kind (informational); a variant must supply `variant`, which
+        # its build then pastes into the retained info payload.
+        base = (ROOT / "packages" / "base.yaml").read_text()
+        info = base[base.index("renewvan/${driver}/info"):]
+        self.assertIn('root["variant"] = "${variant}";', info)
+        for variant in variants.discover():
+            with self.subTest(variant=variant):
+                firmware = (ROOT / "firmware" / f"{variant}.yaml").read_text()
+                self.assertRegex(firmware, rf"(?m)^\s+variant:\s+{re.escape(variant)}\s*$")
 
 if __name__ == "__main__":
     unittest.main()
