@@ -2,6 +2,8 @@
 .esphome/
 *.bin
 __pycache__/
+/.build/
+/secrets/
 secrets.yaml.*
 !secrets.yaml.example
 
