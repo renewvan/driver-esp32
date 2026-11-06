@@ -1,7 +1,7 @@
 # driver-esp32
 
 Every ESP32 firmware the Renewvan van ships, in one repo. Each firmware is a **variant**: ESPHome YAML (no
-custom firmware) for one kind of board, flashed once per physical board. Today there are two (flash or release one of them; never both on the same bus):
+custom firmware) for one kind of board, flashed once per physical board. Today there are two. A van can have any number of boards of either variant, each named when flashed and each its own Driver on the bus:
 
 | Variant           | Board                                                      | Publishes |
 | ----------------- | ---------------------------------------------------------- | --------- |
@@ -143,6 +143,8 @@ variant) as a gate. Then flash from that tag with `scripts/flash.sh <variant>`. 
 MQTT and the OTA password are compiled in from `secrets.yaml`, so a CI-built binary contains placeholders and
 cannot be flashed onto a van (and would publish a known OTA password). The process is shared by every
 renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`).
+The release workflow's pinned hub build step calls `scripts/manifest_substitutions.py` without `--board`, which now
+fails loudly instead of building placeholders until hub passes a board name (hub#161, ticket #12).
 
 ## Driver info and health
 
@@ -150,7 +152,7 @@ Each board appears as its own Driver (`esp32-<name>`) on the dashboard's Driver 
 static fields of the kind live in `manifests/<variant>.json`, the single source. It must not contain `driver`,
 `version` or `board_serial`. Optional fields
 (`manufacturer`, `homepage`) are omitted from the info when empty.
-`scripts/manifest_substitutions.py <variant> --board <name>` turns it, with the board's `board` and `driver`, into
+`scripts/manifest_substitutions.py <variant> --board <name>` (`--board` is required; without it the script fails rather than build placeholders) turns it, with the board's `board` and `driver`, into
 the build's substitutions, for both the flash script and CI. `info` also carries `variant` (the firmware kind,
 informational). `board_serial` is the board's MAC in the form `AA:BB:CC:DD:EE:FF`, so it can be
 compared with the label on the board.
@@ -233,7 +235,7 @@ Per channel `<board>-01` to `<board>-16` (`<id>` below):
 | ------------------------------ | -------- | ----------------------------------------------------------- |
 | `renewvan/relay/<id>/state`    | yes      | JSON `true` / `false`, published after the output changed   |
 | `renewvan/relay/<id>/name`     | yes      | JSON string, only once a name has been set                  |
-| `renewvan/relay/<id>/driver`   | yes      | JSON string `"esp32"`, the owning Driver, always            |
+| `renewvan/relay/<id>/driver`   | yes      | JSON string `"esp32-<board>"`, the owning Driver, always    |
 | `renewvan/relay/<id>/set`      | no       | JSON `true` or `false` only. There is no toggle.            |
 | `renewvan/relay/<id>/name/set` | no       | JSON string, 1 to 63 bytes (bytes, so non-ASCII is shorter) |
 

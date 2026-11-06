@@ -196,29 +196,16 @@ class ResolvedConfigGuard(unittest.TestCase):
                 result = check(resolved.stdout, expected_version="ci-test", variant=variant, board="ci-board")
                 self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_a_build_without_a_board_fails_the_guard_loudly(self):
-        esphome = shutil.which("esphome")
-        if esphome is None:
-            self.skipTest("esphome is not installed")
-        with tempfile.TemporaryDirectory() as tmp:
-            tree = Path(tmp) / "tree"
-            shutil.copytree(ROOT, tree, ignore=shutil.ignore_patterns(".git", ".esphome", "__pycache__", "secrets.yaml"))
-            shutil.copy(ROOT / "secrets.yaml.example", tree / "secrets.yaml")
-            (tree / "firmware" / "secrets.yaml").unlink(missing_ok=True)
-            (tree / "firmware" / "secrets.yaml").symlink_to("../secrets.yaml")
-            args = subprocess.run(
-                [sys.executable, str(ROOT / "scripts" / "manifest_substitutions.py"), "esp32-8x-relay", "--esphome-args"],
-                capture_output=True, text=True, check=True,
-            ).stdout.split("\0")[:-1]
-            resolved = subprocess.run(
-                [esphome, "-s", "version", "ci-test", *args, "config", "firmware/esp32-8x-relay.yaml"],
-                cwd=tree, capture_output=True, text=True,
-            )
-        # ESPHome may reject the half-expanded config itself or exit 0; either way CI must fail.
-        if resolved.returncode == 0:
-            result = check(resolved.stdout, expected_version="ci-test", variant="esp32-8x-relay", board="ci-board")
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("${board}", result.stderr)
+    def test_the_published_info_includes_the_variant_substitution(self):
+        # `info` carries the firmware kind (informational); a variant must supply `variant`, which
+        # its build then pastes into the retained info payload.
+        base = (ROOT / "packages" / "base.yaml").read_text()
+        info = base[base.index("renewvan/${driver}/info"):]
+        self.assertIn('root["variant"] = "${variant}";', info)
+        for variant in variants.discover():
+            with self.subTest(variant=variant):
+                firmware = (ROOT / "firmware" / f"{variant}.yaml").read_text()
+                self.assertRegex(firmware, rf"(?m)^\s+variant:\s+{re.escape(variant)}\s*$")
 
 if __name__ == "__main__":
     unittest.main()
