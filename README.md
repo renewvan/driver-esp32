@@ -51,7 +51,8 @@ manifests/<variant>.json    the static fields of the kind (the single source, se
 packages/base.yaml          shared by every variant: WiFi, OTA, logger, captive portal, MQTT, Driver info/health
 packages/relay-channel.yaml one relay channel, included once per channel by the relay variant
 scripts/                    flash.sh, manifest_substitutions.py, variants.py, and the CI guards
-firmware/secrets.yaml       a symlink to ../secrets.yaml (ESPHome looks secrets up next to the entrypoint)
+firmware/secrets.yaml       a symlink to ../secrets.yaml, for plain `esphome config`; flash.sh builds from .build/<board>/ instead
+secrets/<board>.yaml        one board's own secrets (gitignored), laid over the shared secrets.yaml by scripts/board_secrets.py
 ```
 
 `manifests/` is the list of variants: CI, the release build and every script derive them from it
@@ -83,16 +84,53 @@ fields from its manifest.
 
 ```bash
 pip install esphome
-cp secrets.yaml.example secrets.yaml   # fill in your WiFi/MQTT/OTA values
-scripts/flash.sh esp32-16x-relay --board front   # first flash: connect via USB
-scripts/flash.sh --list                # the variants
+cp secrets.yaml.example secrets.yaml           # once: the values every board shares (WiFi, broker address)
+mkdir -p secrets
+cp secrets.yaml.example secrets/front.yaml     # per board: its own account, OTA password, API key
+scripts/flash.sh esp32-16x-relay --board front # first flash: connect via USB
+scripts/flash.sh --list                        # the variants
 ```
+
+### Secrets are per board
+
+`secrets.yaml` (repo root, gitignored) holds what every board of the van shares: `wifi_ssid`, `wifi_password`,
+`wifi_ap_fallback_password`, `mqtt_broker`, `mqtt_port`. `secrets/<name>.yaml` (gitignored) holds what is that
+board's own, and its keys win over the shared file:
+
+| Key                              | Value                                                                                                             |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `mqtt_username`, `mqtt_password` | the board's broker account `esp32-<name>` and its password, the hub's `MQTT_ESP32_<NAME>_PASSWORD` (hub ADR 0027) |
+| `ota_password`                   | its own, so updating one board needs no other board's password                                                    |
+| `api_encryption_key`             | its own (`esphome secrets api_encryption_key`)                                                                    |
+| `ota_address`                    | optional: the board's address, used as the OTA target when `--device` is not given                                |
+
+Both files are flat `key: value` lines (`secrets.yaml.example` lists every key). `flash.sh` merges them with
+`scripts/board_secrets.py` into `.build/<name>/`, a gitignored staging copy of the build that only that board's
+build reads, so a board can never be built with another board's credentials. A board with no `secrets/<name>.yaml`
+is refused with the file to create.
+
+### A second board, and updating a board
+
+```bash
+cp secrets.yaml.example secrets/rear.yaml      # fill in rear's own account, OTA password, API key
+scripts/flash.sh esp32-8x-relay --board rear --device /dev/ttyUSB0   # first flash of rear: USB
+scripts/flash.sh esp32-16x-relay --board front # later: OTA to front only; rear is untouched
+```
+
+An update goes over WiFi: `flash.sh <variant> --board <name>` with the same name targets that board, by its
+`ota_address` if its secrets set one, otherwise by its hostname `renewvan-esp32-<name>`, and authenticates with
+that board's `ota_password`. Another board of the same variant is never reached. `--device <port|address>`
+overrides the target. Re-flashing with the same name keeps the same Driver (and the same retained topics).
+
+Optional and best-effort: before a first flash, `mosquitto_sub -h <broker> -C 1 -W 3 -t 'renewvan/esp32-<name>/info'`
+(with a credential that may read) prints a line when that name is already retained on the broker, i.e. the name is
+taken by another board. `flash.sh` does not do this itself.
 
 Always flash with `scripts/flash.sh <variant>`, not `esphome run firmware/<variant>.yaml` directly. The
 script stamps the firmware version from your checkout, compiles in the board name (`--board <name>` is required and
 validated, see above) and merges `manifests/<variant>.json` into the build, and passes any other arguments through
 to `esphome run` (e.g. `scripts/flash.sh esp32-16x-relay --board front --device /dev/ttyUSB0`). To update a
-board over WiFi, flash again with the same `--board` name.
+board over WiFi, flash again with the same `--board` name (see below).
 
 A bare `esphome run firmware/<variant>.yaml` fails, on purpose: the board name and the manifest are the only
 sources of the Driver's identity (`board`, `driver`, `product`, `source`, `publishes`), so the YAML does not declare
@@ -100,12 +138,12 @@ them. ESPHome only warns about an undeclared substitution and would otherwise us
 MQTT topic; CI's resolved-config guard fails on that.
 
 Subsequent updates can go over WiFi (run the script again once the device has joined your network)
-using the OTA password in `secrets.yaml`.
+using the OTA password in the board's `secrets/<name>.yaml`.
 
 ### Flashing with Claude Code
 
 The `flash-esp32` skill (`skills/flash-esp32/SKILL.md` in `renewvan/skills`) walks through the same steps
-interactively: it finds the variant, asks for the serial port or OTA address, fills `secrets.yaml` from
+interactively: it finds the variant, asks for the serial port or OTA address, fills `secrets.yaml` and the board's `secrets/<name>.yaml` from
 `secrets.yaml.example` (it never prints the contents), runs the pre-flight checks, flashes with
 `scripts/flash.sh`, and verifies the board on the MQTT bus. Run it from this checkout and ask Claude to
 "flash the esp32". It drives `scripts/flash.sh` and does not replace it; if the skill and this README disagree,
@@ -140,7 +178,7 @@ placeholder. CI additionally fails if the stamp is lost.
 Run workflow**, or `gh workflow run release.yml -f bump=minor`: one run works out the next version
 from the latest `v*` tag, tags `main`, creates the GitHub release, and compiles the tagged tree (every
 variant) as a gate. Then flash from that tag with `scripts/flash.sh <variant>`. **No binary is attached**: WiFi,
-MQTT and the OTA password are compiled in from `secrets.yaml`, so a CI-built binary contains placeholders and
+MQTT and the OTA password are compiled in from `secrets.yaml` and `secrets/<name>.yaml`, so a CI-built binary contains placeholders and
 cannot be flashed onto a van (and would publish a known OTA password). The process is shared by every
 renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`).
 The release workflow's pinned hub build step calls `scripts/manifest_substitutions.py` without `--board`, which now
