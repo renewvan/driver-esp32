@@ -33,7 +33,7 @@ def make_tree(root, manifests=(), firmware=()):
     for stem, manifest in dict(manifests).items():
         (root / "manifests" / f"{stem}.json").write_text(json.dumps(manifest))
     for stem in firmware:
-        (root / "firmware" / f"{stem}.yaml").write_text("esphome:\n")
+        (root / "firmware" / f"{stem}.yaml").write_text(f"substitutions:\n  variant: {stem}\nesphome:\n")
 
 
 def run(command, cwd):
@@ -184,6 +184,25 @@ class Discovery(unittest.TestCase):
         root = self.tree(manifests={"demo-board": MANIFEST}, firmware=["demo-board"])
         (root / "firmware" / "secrets.yaml").write_text("wifi_ssid: x\n")
         self.assertEqual(run("check", root).returncode, 0)
+
+    def test_firmware_declaring_another_variant_fails_and_is_named(self):
+        root = self.tree(manifests={"demo-board": MANIFEST}, firmware=["demo-board"])
+        (root / "firmware" / "demo-board.yaml").write_text("substitutions:\n  variant: other-board\n")
+        result = run("check", root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("firmware/demo-board.yaml", result.stderr)
+        self.assertIn("variant: demo-board", result.stderr)
+
+    def test_firmware_without_a_variant_substitution_fails(self):
+        root = self.tree(manifests={"demo-board": MANIFEST}, firmware=["demo-board"])
+        (root / "firmware" / "demo-board.yaml").write_text("esphome:\n")
+        self.assertNotEqual(run("check", root).returncode, 0)
+
+    def test_a_variant_that_is_not_a_slug_fails(self):
+        root = self.tree(manifests={"Demo_Board": MANIFEST}, firmware=["Demo_Board"])
+        result = run("check", root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not a slug", result.stderr)
 
     def test_no_manifests_fails(self):
         root = self.tree()
