@@ -142,7 +142,7 @@ left. It clears `renewvan/esp32-<old>/info`, `renewvan/esp32-<old>/health` and e
 `renewvan/relay/<old>-<nn>/*` (`state`, `name`, `driver`), and nothing of any other board. It refuses while the old
 board's health is still `online` (the board would republish at once) unless `--force`. Everything after `--` goes to
 `mosquitto_sub`/`mosquitto_pub` (host, port, credentials, TLS); the credential must be allowed to publish those topics
-(the hub's admin account, or the board's own). The dashboard drops the Driver once its info is gone.
+(the hub's admin account, or the board's own). With its info and health gone, the Driver has nothing left to show on the bus.
 
 Always flash with `scripts/flash.sh <variant>`, not `esphome run firmware/<variant>.yaml` directly. The
 script stamps the firmware version from your checkout, compiles in the board name (`--board <name>` is required and
