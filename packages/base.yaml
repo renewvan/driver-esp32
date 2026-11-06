@@ -79,7 +79,7 @@ ota:
 #   of one variant with different `--board` names share no topic. The variant is not a Driver;
 #   it only appears as the informational `variant` field of info (consumers must not branch on it).
 #   The name is compiled in: reflashing with the same name is the same Driver, renaming a board is
-#   a new Driver and the old retained topics must be cleared by hand.
+#   a new Driver and the old retained topics are cleared with scripts/clear_board.py.
 # - topic_prefix: null drops ESPHome's own <device>/status, <device>/debug and discovery topics.
 # - discover_ip: false drops the esphome/discover and esphome/ping subscriptions.
 # - The built-in birth message is disabled (`birth_message:` empty). ESPHome would send
