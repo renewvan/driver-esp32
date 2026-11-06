@@ -38,7 +38,7 @@ reflashing with the same name is the same Driver. Everything on the bus derives 
 slug (lowercase letters and digits, starting with a letter, words joined by single hyphens), at most 16 characters
 (the node name is limited to 31), and it must not end in `-<digits>`, so a relay id is never ambiguous with a board
 name. Renaming a board is a new Driver: the old retained `renewvan/esp32-<old>/*` and `renewvan/relay/<old>-<nn>/*`
-topics must be cleared by hand (no tool does it). Nothing checks that a name is unused: two boards flashed with
+topics must be cleared (see "Removing or renaming a board"). Nothing checks that a name is unused: two boards flashed with
 the same name will overwrite each other's retained state.
 
 The name `driver-relay` is deliberately left free for a later Pi-wired driver.
@@ -50,7 +50,7 @@ firmware/<variant>.yaml     the ESPHome entrypoint of one variant: board, hardwa
 manifests/<variant>.json    the static fields of the kind (the single source, see "Driver info and health"); no `driver`
 packages/base.yaml          shared by every variant: WiFi, OTA, logger, captive portal, MQTT, Driver info/health
 packages/relay-channel.yaml one relay channel, included once per channel by the relay variant
-scripts/                    flash.sh, manifest_substitutions.py, variants.py, and the CI guards
+scripts/                    flash.sh, clear_board.py, manifest_substitutions.py, variants.py, and the CI guards
 firmware/secrets.yaml       a symlink to ../secrets.yaml, for plain `esphome config`; flash.sh builds from .build/<board>/ instead
 secrets/<board>.yaml        one board's own secrets (gitignored), laid over the shared secrets.yaml by scripts/board_secrets.py
 ```
@@ -125,6 +125,24 @@ overrides the target. Re-flashing with the same name keeps the same Driver (and 
 Optional and best-effort: before a first flash, `mosquitto_sub -h <broker> -C 1 -W 3 -t 'renewvan/esp32-<name>/info'`
 (with a credential that may read) prints a line when that name is already retained on the broker, i.e. the name is
 taken by another board. `flash.sh` does not do this itself.
+
+### Removing or renaming a board
+
+A removed board leaves its retained topics on the broker, so it keeps showing as a Driver (`offline`). A renamed
+board is a new Driver and leaves the old name behind the same way. After powering the old board off (or
+reflashing it under its new name), clear the old name:
+
+```bash
+scripts/clear_board.py <old-name> --dry-run -- -h <broker> -u <user> -P <password>   # list what would go
+scripts/clear_board.py <old-name> -- -h <broker> -u <user> -P <password>             # clear it
+```
+
+It finds what is retained for the name, publishes an empty retained message to each topic, and checks that nothing is
+left. It clears `renewvan/esp32-<old>/info`, `renewvan/esp32-<old>/health` and every
+`renewvan/relay/<old>-<nn>/*` (`state`, `name`, `driver`), and nothing of any other board. It refuses while the old
+board's health is still `online` (the board would republish at once) unless `--force`. Everything after `--` goes to
+`mosquitto_sub`/`mosquitto_pub` (host, port, credentials, TLS); the credential must be allowed to publish those topics
+(the hub's admin account, or the board's own). With its info and health gone, the Driver has nothing left to show on the bus.
 
 Always flash with `scripts/flash.sh <variant>`, not `esphome run firmware/<variant>.yaml` directly. The
 script stamps the firmware version from your checkout, compiles in the board name (`--board <name>` is required and
