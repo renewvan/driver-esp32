@@ -40,9 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Only the relay has a channel list; a variant without one has nothing to compare.
+      # Only the relay variants have a channel list; a variant without one has nothing to compare.
       - name: Guard the relay channel list
-        if: matrix.variant == 'esp32-16x-relay'
+        if: matrix.variant == 'esp32-16x-relay' || matrix.variant == 'esp32-8x-relay'
         run: python3 scripts/check_relay_channels.py "${{ matrix.variant }}"
 
       - name: Fake secrets for config validation

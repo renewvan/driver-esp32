@@ -1,11 +1,12 @@
 # driver-esp32
 
 Every ESP32 firmware the Renewvan van ships, in one repo. Each firmware is a **variant**: ESPHome YAML (no
-custom firmware) for one kind of board, flashed once per physical board. Today there is one:
+custom firmware) for one kind of board, flashed once per physical board. Today there are two (flash or release one of them; never both on the same bus):
 
 | Variant           | Board                                                      | Publishes |
 | ----------------- | ---------------------------------------------------------- | --------- |
 | `esp32-16x-relay` | ESP32-WROOM + two chained SN74HC595, sixteen relay outputs | `relay`   |
+| `esp32-8x-relay`  | LC-Relay-ESP-8R-D5 (ESP32-E), eight relays on direct GPIOs | `relay`   |
 
 Variants are named for their board, not their source: see
 [ADR 0012](https://github.com/renewvan/hub/blob/main/docs/adr/0012-board-named-relay-node.md). The wire contract of
@@ -169,6 +170,24 @@ and `hub`'s deployment manifest references this repo's flash instructions.
 > ESP Web Tools manifest) into its output folder, named after the device. That is unrelated to
 > `manifests/<variant>.json`, which describes the Driver. The latter is the source of the Driver info; the
 > action's is a build artifact and is not used here.
+
+## Variant: esp32-8x-relay
+
+8-channel relay driver for the LC Technology LC-Relay-ESP-8R-D5 (ESP32-E, one relay per GPIO, no shift
+register). Entrypoint `firmware/esp32-8x-relay.yaml`, manifest `manifests/esp32-8x-relay.json`, channel package
+`packages/relay-channel-gpio.yaml`. Same wire contract, Driver key (`esp32`) and safety rules as the 16x variant,
+with channels `relay_01` to `relay_08`; choose it with `scripts/flash.sh esp32-8x-relay`.
+
+| Channel    | GPIO | Channel    | GPIO               |
+| ---------- | ---- | ---------- | ------------------ |
+| `relay_01` | 32   | `relay_05` | 27                 |
+| `relay_02` | 33   | `relay_06` | 14                 |
+| `relay_03` | 25   | `relay_07` | 12 (strapping pin) |
+| `relay_04` | 26   | `relay_08` | 13                 |
+
+Pins come from the [ESPHome device page](https://devices.esphome.io/devices/esp32e-relay-x8/). Relay polarity
+(assumed active-high, not inverted) and the GPIO12 boot behaviour are **unverified on the bench**: test with no load
+connected first. It shares the Driver key and relay ids with the 16x board, so only one board per bus.
 
 ## Variant: esp32-16x-relay
 
