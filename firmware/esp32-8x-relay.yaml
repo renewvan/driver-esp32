@@ -27,7 +27,7 @@ substitutions:
 esp32:
   board: esp32dev
   framework:
-    type: arduino
+    type: esp-idf
 
 # Step (1) of the ONE connect chain in packages/base.yaml (states, then Driver info, then
 # `online`); see esp32-16x-relay.yaml for why it is a script.
@@ -109,3 +109,6 @@ packages:
       file: ../packages/relay-channel-gpio.yaml,
       vars: { ch: relay_08, nn: "08", gpio: GPIO13 },
     }
+  # BLE wake: a phone near the van can switch the channel that powers the hub ON with no WiFi or
+  # hub (packages/ble-wake.yaml). `wake_ch` is that channel; relay_01 until the board is wired.
+  ble_wake: !include { file: ../packages/ble-wake.yaml, vars: { wake_ch: relay_01 } }
