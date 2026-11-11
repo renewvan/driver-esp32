@@ -55,7 +55,7 @@ jobs:
         run: python3 scripts/check_relay_channels.py "${{ matrix.variant }}"
 
       - name: Fake secrets for config validation
-        run: cp secrets.yaml.example secrets.yaml
+        run: cp secrets.yaml.example firmware/secrets.yaml
 
       # The CI version is deliberately not a real release: nothing built here is flashed.
       - name: Compose the CI version and the manifest substitutions

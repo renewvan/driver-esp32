@@ -1,4 +1,5 @@
 /secrets.yaml
+/firmware/secrets.yaml
 .esphome/
 *.bin
 __pycache__/

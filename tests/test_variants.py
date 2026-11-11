@@ -180,7 +180,7 @@ class Discovery(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("firmware/orphan.yaml", result.stderr)
 
-    def test_the_secrets_symlink_in_firmware_is_not_an_orphan_variant(self):
+    def test_a_secrets_file_in_firmware_is_not_an_orphan_variant(self):
         root = self.tree(manifests={"demo-board": MANIFEST}, firmware=["demo-board"])
         (root / "firmware" / "secrets.yaml").write_text("wifi_ssid: x\n")
         self.assertEqual(run("check", root).returncode, 0)
