@@ -27,7 +27,7 @@ substitutions:
 esp32:
   board: esp32dev
   framework:
-    type: arduino
+    type: esp-idf
 
 # Step (1) of the ONE connect chain in packages/base.yaml (states, then Driver info, then
 # `online`); see esp32-16x-relay.yaml for why it is a script.
