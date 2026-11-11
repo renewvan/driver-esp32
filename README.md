@@ -203,8 +203,15 @@ variant) as a gate. Then flash from that tag with `scripts/flash.sh <variant>`. 
 MQTT and the OTA password are compiled in from `secrets/<name>.yaml`, so a CI-built binary contains placeholders and
 cannot be flashed onto a van (and would publish a known OTA password). The process is shared by every
 renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`).
-The release workflow's pinned hub build step calls `scripts/manifest_substitutions.py` without `--board`, which now
-fails loudly instead of building placeholders until hub passes a board name (hub#161, ticket #12).
+**One tag releases every variant.** The release run lists the variants (`python3 scripts/variants.py list`) and
+compiles each one from the tagged tree, all stamped with that one tag, as a matrix: a tag is only good if every
+variant (and so every board kind) builds. Boards are not part of a release: the gate builds use the fixed placeholder
+board `ci-board` (validated with `scripts/variants.py board`, like `CI_BOARD` in validate.yml), and a real board gets
+its name at flash time. The pinned hub workflow (hub#165 and later) passes `--board ci-board` to
+`scripts/manifest_substitutions.py`, which fails without it.
+
+To release: run the workflow (see above), wait for every `build-firmware (<variant>)` job to pass, then reflash each
+board from that tag with `scripts/flash.sh <variant> --board <name>`.
 
 ## Driver info and health
 
