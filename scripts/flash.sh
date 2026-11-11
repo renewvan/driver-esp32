@@ -12,10 +12,10 @@
 # validated before anything is built: a slug (lowercase letters and numerals, hyphen-separated),
 # at most 16 characters, and not ending in a hyphen plus numerals (scripts/variants.py).
 #
-# Secrets are per board: the shared secrets.yaml (WiFi, broker address) with secrets/<name>.yaml laid
-# over it (the board's broker account, OTA password, API key, optional `ota_address`), merged by
-# scripts/board_secrets.py into the gitignored staging tree .build/<name>/ (a copy of the variant's yaml
-# next to its own secrets.yaml, since ESPHome reads secrets next to the entrypoint). A board with no
+# Secrets are per board and live in ONE file, secrets/<name>.yaml (WiFi, broker address and account,
+# OTA password, BLE wake secret, optional `ota_address`). scripts/board_secrets.py copies it into the
+# gitignored staging tree .build/<name>/ (a copy of the variant's yaml next to its own secrets.yaml, since
+# ESPHome reads secrets next to the entrypoint); the repo-root secrets.yaml is not read. A board with no
 # secrets/<name>.yaml is refused. With no `--device`, an `ota_address` in the board's secrets is the
 # OTA target; without one esphome finds the board by its own hostname renewvan-esp32-<name>.
 #

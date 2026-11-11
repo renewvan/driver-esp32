@@ -46,9 +46,10 @@ esphome:
     name: renewvan.driver-esp32-${variant}
     version: ${version}
 
-# WiFi/OTA credentials are install-specific, never committed. Copy secrets.yaml.example to
-# secrets.yaml (gitignored) and fill in your own values. ESPHome looks a secret up next to
-# the entrypoint (firmware/), so firmware/secrets.yaml is a symlink to the one in the repo root.
+# WiFi/OTA credentials are install-specific, never committed. Each board has ONE secrets file,
+# secrets/<board>.yaml (copy secrets.yaml.example and fill it in); scripts/flash.sh builds from it.
+# ESPHome looks a secret up next to the entrypoint (firmware/); for a plain `esphome config` by hand,
+# firmware/secrets.yaml is a symlink to a root secrets.yaml you copy the example to (CI does that).
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
