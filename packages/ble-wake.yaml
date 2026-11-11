@@ -41,6 +41,13 @@ globals:
     type: uint32_t
     initial_value: "0"
 
+# The name a phone's scan list shows. ESPHome limits a BLE name to 20 characters and fails the build
+# on a longer explicit one, while a board name may be 16, so the Jinja slice cuts `renewvan-<board>`
+# to fit: boards sharing their first 11 characters look alike in a scan (the node name, the hostname
+# and the bus identity stay whole).
+esp32_ble:
+  name: "${('renewvan-' ~ board)[:20]}"
+
 esp32_ble_server:
   manufacturer: Renewvan
   services:
