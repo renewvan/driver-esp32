@@ -1,4 +1,4 @@
-"""Seam: shared secrets + secrets/<board>.yaml -> the one file a board's build reads.
+"""Seam: secrets/<board>.yaml -> the one file a board's build reads.
 
 Observed through the script's command line, the way flash.sh calls it, against synthetic trees.
 """
@@ -42,15 +42,20 @@ class BoardSecretsTest(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
 
-    def test_board_keys_override_shared_and_shared_fills_the_rest(self):
-        make_tree(self.root, boards={"front": '# mine\nota_password: "front-pw"\nmqtt_username: "esp32-front"\n'})
+    def test_the_build_gets_exactly_the_boards_own_file_and_ignores_the_root_secrets(self):
+        make_tree(
+            self.root,
+            boards={"front": '# mine\nwifi_ssid: "front-van"\nota_password: "front-pw"\nmqtt_username: "esp32-front"\n'},
+        )
         done = run(self.root, "front", "--write", str(self.root / ".build" / "secrets.yaml"))
         self.assertEqual(done.returncode, 0, done.stderr)
-        merged = (self.root / ".build" / "secrets.yaml").read_text()
-        self.assertIn('wifi_ssid: "van"', merged)
-        self.assertIn('ota_password: "front-pw"', merged)
-        self.assertNotIn('"shared"', merged)
-        self.assertIn('mqtt_username: "esp32-front"', merged)
+        written = (self.root / ".build" / "secrets.yaml").read_text()
+        self.assertIn('wifi_ssid: "front-van"', written)
+        self.assertIn('ota_password: "front-pw"', written)
+        self.assertIn('mqtt_username: "esp32-front"', written)
+        # The root secrets.yaml (SHARED) is the fake CI file: none of its values leak into a board.
+        self.assertNotIn('"van"', written)
+        self.assertNotIn('"shared"', written)
 
     def test_two_boards_hold_their_own_secrets(self):
         make_tree(

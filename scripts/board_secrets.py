@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Per-board secrets: the shared secrets.yaml layered under secrets/<board>.yaml.
+"""Per-board secrets: everything a board's build needs is in ONE file, secrets/<board>.yaml.
 
-A board's build reads one flat secrets file. It is the repo-root `secrets.yaml` (the values every
-board of the van shares: WiFi, broker address) with the keys of `secrets/<board>.yaml` laid over it
-(what is the board's own: its broker account, `ota_password`, `api_encryption_key`, and optionally
-`ota_address`). A board therefore cannot pick up another board's credentials, and reflashing or
-OTA-updating one never touches the other.
+A board's build reads one flat secrets file: `secrets/<board>.yaml` (WiFi, the broker address and its
+own broker account, `ota_password`, `ble_wake_secret`, and optionally `ota_address`). A board
+therefore cannot pick up another board's credentials, and reflashing or OTA-updating one never touches
+the other. The repo-root `secrets.yaml` is NOT read here: it only holds the fake values CI and a plain
+`esphome config` use.
 
-`secrets/<board>.yaml` is required: a board with no file of its own would silently build with the
-shared defaults, so the missing file is an error that says how to create it. Both files are flat
-`key: value` lines (what secrets.yaml.example shows); values are copied through untouched, so quoting
-is preserved. `ota_address` is not an ESPHome secret: flash.sh reads it to pick the OTA target.
+`secrets/<board>.yaml` is required, so a missing file is an error that says how to create it. It is
+flat `key: value` lines (what secrets.yaml.example shows); values are copied through untouched, so
+quoting is preserved. `ota_address` is not an ESPHome secret: flash.sh reads it to pick the OTA target.
 
-usage: board_secrets.py <board> --write PATH   write the merged file (mode 600) for ESPHome to read
+usage: board_secrets.py <board> --write PATH   write the board's file (mode 600) for ESPHome to read
        board_secrets.py <board> --get KEY      print KEY's value (unquoted), or nothing when unset
 
-Importable: parse(), merge(), board_file(), unquote().
+Importable: parse(), load(), board_file(), unquote().
 """
 
 import argparse
@@ -52,24 +51,19 @@ def board_file(board, root=ROOT):
     return Path(root) / "secrets" / f"{board}.yaml"
 
 
-def merge(board, root=ROOT):
-    """The shared secrets with the board's own laid over them. Raises FileNotFoundError/ValueError."""
+def load(board, root=ROOT):
+    """The board's secrets, from its one file. Raises FileNotFoundError/ValueError."""
     root = Path(root)
-    shared_path = root / "secrets.yaml"
-    own_path = board_file(board, root)
-    if not own_path.is_file():
+    path = board_file(board, root)
+    if not path.is_file():
         raise FileNotFoundError(
-            f"no secrets for board '{board}': create secrets/{board}.yaml "
-            "(see secrets.yaml.example for the keys a board owns)"
+            f"no secrets for board '{board}': copy secrets.yaml.example to secrets/{board}.yaml "
+            "and fill in every key"
         )
-    values = {}
-    for path in (shared_path, own_path):
-        if path.is_file():
-            try:
-                values.update(parse(path.read_text(encoding="utf-8")))
-            except ValueError as err:
-                raise ValueError(f"{path.relative_to(root)}: {err}") from err
-    return values
+    try:
+        return parse(path.read_text(encoding="utf-8"))
+    except ValueError as err:
+        raise ValueError(f"{path.relative_to(root)}: {err}") from err
 
 
 def main(argv=None):
@@ -81,7 +75,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     try:
-        values = merge(args.board)
+        values = load(args.board)
     except (FileNotFoundError, ValueError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 2

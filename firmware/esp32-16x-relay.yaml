@@ -40,7 +40,7 @@ substitutions:
 esp32:
   board: esp32dev
   framework:
-    type: arduino
+    type: esp-idf
 
 # Two chained SN74HC595: pins 0-7 on the register whose SER is the ESP32 data line, 8-15 on
 # the second. GPIO5 (oe_pin) and GPIO12 (latch) are strapping pins; the warning is
