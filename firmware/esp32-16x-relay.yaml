@@ -136,3 +136,6 @@ packages:
     !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_15, nn: "15", bit: 14 } }
   relay_16:
     !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_16, nn: "16", bit: 15 } }
+  # BLE wake: a phone near the van can switch the channel that powers the hub ON with no WiFi or
+  # hub (packages/ble-wake.yaml). `wake_ch` is that channel; relay_01 until the board is wired.
+  ble_wake: !include { file: ../packages/ble-wake.yaml, vars: { wake_ch: relay_01 } }
