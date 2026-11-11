@@ -52,7 +52,7 @@ packages/base.yaml          shared by every variant: WiFi, OTA, logger, captive 
 packages/relay-channel.yaml one relay channel, included once per channel by the relay variant
 scripts/                    flash.sh, clear_board.py, manifest_substitutions.py, variants.py, and the CI guards
 secrets/<board>.yaml        ALL of one board's secrets in one file (gitignored); flash.sh builds from it
-firmware/secrets.yaml       a symlink to ../secrets.yaml, only for a plain `esphome config` (CI copies the example there)
+firmware/secrets.yaml       gitignored; only for a plain `esphome config` (CI copies the example there)
 ```
 
 `manifests/` is the list of variants: CI, the release build and every script derive them from it
@@ -110,8 +110,8 @@ build reads, so a board can never be built with another board's credentials. A b
 is refused with the file to create. Two boards on the same WiFi repeat the WiFi lines in both files: that is the
 price of never sharing a file between boards.
 
-A root `secrets.yaml` is not read by `flash.sh`. It exists only for a plain `esphome config` by hand (copy the
-example there; `firmware/secrets.yaml` is a symlink to it) and for CI, which does exactly that.
+`flash.sh` reads no root or `firmware/` secrets file. `firmware/secrets.yaml` (gitignored) exists only for a plain
+`esphome config` by hand (copy the example there) and for CI, which does exactly that.
 
 ### A second board, and updating a board
 

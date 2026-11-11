@@ -120,7 +120,7 @@ def check(root=ROOT):
             )
 
     for path in sorted((root / "firmware").glob("*.yaml")):
-        # firmware/secrets.yaml is the symlink ESPHome's secret lookup needs, not an entrypoint.
+        # firmware/secrets.yaml (CI and a hand-run `esphome config` put the example there) is not an entrypoint.
         if path.name != "secrets.yaml" and path.stem not in variants:
             problems.append(f"firmware/{path.name} has no manifests/{path.stem}.json")
 
