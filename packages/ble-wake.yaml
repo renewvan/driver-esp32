@@ -1,0 +1,117 @@
+# BLE wake: switch ONE relay channel ON over Bluetooth, with no WiFi, router or hub.
+#
+# Use case: the van is parked for the winter with the hub (Raspberry Pi) and router powered down
+# through this board's relay. The board itself stays powered, and its owner, standing near the van,
+# powers the hub back on from a phone (the dashboard's /wake page, Web Bluetooth).
+#
+# Included once, by a relay variant, after packages/relay-channel.yaml:
+#   ble_wake: !include { file: ../packages/ble-wake.yaml, vars: { wake_ch: relay_01 } }
+# vars: wake_ch = the channel key (`relay_<nn>`, as in the variant's `packages:`) that powers the
+# hub. Its ESPHome switch id is `relay_${wake_ch}`.
+#
+# This is deliberately a NARROW second control path, an exception to the "no local control" rule
+# in the header of firmware/esp32-16x-relay.yaml, and it is bounded:
+#   * it can only turn that ONE channel ON. There is no BLE "off": cutting the hub's power is a
+#     shutdown the hub must finish first (the dashboard asks it to over MQTT, then opens the relay),
+#     because a hard cut risks the Pi's SD card;
+#   * every write must carry the shared secret `ble_wake_secret` (secrets/<board>.yaml), compared
+#     in constant time; three wrong secrets in a row lock the command for 60 seconds;
+#   * the state still reaches the bus: the channel's own `on_state` (packages/relay-channel.yaml)
+#     publishes it, exactly as for an MQTT `set`.
+# The secret is a deterrent, not cryptography: a BLE write is plaintext on the air and can be
+# replayed by someone who sniffs it. The only effect of a replay is powering the owner's own hub.
+#
+# GATT layout (UUIDs are the wire contract with dashboard/src/lib/bleWake.ts):
+#   service        7e1a0001-6f6e-4f3a-9c10-52656e657776
+#   command  (W)   7e1a0002-...   UTF-8 text  "<secret>|on"   (split at the LAST '|')
+#   status (R, N)  7e1a0003-...   UTF-8 text  "on" | "off"
+#
+# Needs `ble_wake_secret` in secrets/<board>.yaml. WiFi and BLE share the ESP32's one radio: WiFi
+# keeps retrying while the router is off, which slows BLE. A winter-mode that stops WiFi is left
+# for later; measure before relying on it.
+
+substitutions:
+  ble_wake_secret: !secret ble_wake_secret
+
+globals:
+  - id: ble_wake_failures
+    type: int
+    initial_value: "0"
+  - id: ble_wake_locked_until
+    type: uint32_t
+    initial_value: "0"
+
+# The name a phone's scan list shows. ESPHome limits a BLE name to 20 characters and fails the build
+# on a longer explicit one, while a board name may be 16, so the Jinja slice cuts `renewvan-<board>`
+# to fit: boards sharing their first 11 characters look alike in a scan (the node name, the hostname
+# and the bus identity stay whole).
+esp32_ble:
+  name: "${('renewvan-' ~ board)[:20]}"
+
+esp32_ble_server:
+  manufacturer: Renewvan
+  services:
+    - uuid: 7e1a0001-6f6e-4f3a-9c10-52656e657776
+      advertise: true
+      characteristics:
+        - id: ble_wake_command
+          uuid: 7e1a0002-6f6e-4f3a-9c10-52656e657776
+          read: false
+          write: true
+          value: ""
+          on_write:
+            then:
+              - lambda: |-
+                  const uint32_t now = millis();
+                  if (id(ble_wake_locked_until) != 0 && (int32_t)(now - id(ble_wake_locked_until)) < 0) {
+                    ESP_LOGW("ble_wake", "locked, write ignored");
+                    return;
+                  }
+                  const std::string text(x.begin(), x.end());
+                  const size_t bar = text.rfind('|');
+                  bool ok = false;
+                  if (bar != std::string::npos) {
+                    const std::string given = text.substr(0, bar);
+                    const std::string want = "${ble_wake_secret}";
+                    // Constant time over the secret's length: no early exit on the first wrong byte.
+                    uint8_t diff = given.size() != want.size();
+                    for (size_t i = 0; i < want.size(); i++) {
+                      diff |= (uint8_t) (i < given.size() ? given[i] : 0) ^ (uint8_t) want[i];
+                    }
+                    ok = diff == 0 && text.substr(bar + 1) == "on";
+                  }
+                  if (!ok) {
+                    ESP_LOGW("ble_wake", "rejected write");
+                    if (++id(ble_wake_failures) >= 3) {
+                      id(ble_wake_failures) = 0;
+                      id(ble_wake_locked_until) = now + 60000;
+                      ESP_LOGW("ble_wake", "locked for 60 s");
+                    }
+                    return;
+                  }
+                  id(ble_wake_failures) = 0;
+                  ESP_LOGI("ble_wake", "wake accepted");
+                  id(relay_${wake_ch}).turn_on();
+        - id: ble_wake_status
+          uuid: 7e1a0003-6f6e-4f3a-9c10-52656e657776
+          read: true
+          write: false
+          notify: true
+          value: "off"
+
+# Keep the status characteristic in step with the physical output, and notify a connected phone.
+# An internal template binary sensor that follows the wake channel's switch, not an `on_state`
+# merged into that switch: the status is a BLE concern and packages/relay-channel.yaml stays as is.
+binary_sensor:
+  - platform: template
+    id: ble_wake_relay_state
+    internal: true
+    lambda: "return id(relay_${wake_ch}).state;"
+    on_state:
+      - ble_server.characteristic.set_value:
+          id: ble_wake_status
+          value: !lambda |-
+            const char *s = x ? "on" : "off";
+            return std::vector<uint8_t>(s, s + strlen(s));
+      - ble_server.characteristic.notify:
+          id: ble_wake_status
