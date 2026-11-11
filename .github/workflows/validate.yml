@@ -29,6 +29,11 @@ jobs:
       - name: Guard the variant layout
         run: python3 scripts/variants.py check
 
+      # CI builds as CI_BOARD: it must itself obey the board-name rules (slug, length, no -<digits>
+      # tail), the same check flash.sh runs on a real name.
+      - name: Guard the CI board name
+        run: python3 scripts/variants.py board "${CI_BOARD}"
+
       # The matrix is the directory: adding a variant adds a job, nothing here changes.
       - name: List the variants
         id: list

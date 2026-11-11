@@ -4,7 +4,7 @@ name: Release
 # The process lives in renewvan/hub (docs/adr/0015); this file only says what this repo ships.
 # One tag stamps the same version into EVERY variant under manifests/: the reusable workflow
 # builds each one listed by `python3 scripts/variants.py list` (firmware/<variant>.yaml +
-# manifests/<variant>.json). The pinned hub ref must be a commit that has that variant matrix.
+# manifests/<variant>.json). The pinned hub ref must have that variant matrix and the placeholder --board (hub#165).
 on:
   workflow_dispatch:
     inputs:
@@ -33,7 +33,7 @@ jobs:
       # Not used by kind: firmware, but GitHub validates the whole called workflow up front and
       # its publish-image job requests packages: write; a caller that grants less fails to start.
       packages: write
-    uses: renewvan/hub/.github/workflows/release.yml@dae1ea89efabae05a2009699d2899248658d08e7
+    uses: renewvan/hub/.github/workflows/release.yml@50d4ad5dc07d0a88741097cb0f87f9bc25ac9e6d
     with:
       kind: firmware
       esphome-version: "2026.9.1"

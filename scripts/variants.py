@@ -11,6 +11,7 @@ release build and every script derive them from it, so adding a variant needs no
 
 usage: variants.py list          print the variants as a compact JSON array (for a CI matrix)
        variants.py check         fail unless every variant satisfies the layout invariants above
+                                 (including: its firmware declares `variant: <stem>`)
        variants.py board NAME    fail unless NAME is a valid board name (see validate_board)
 
 Importable: ROOT, DRIVER_PREFIX, discover(), manifest_path(), firmware_path(), resolve_manifest(),
@@ -107,8 +108,16 @@ def check(root=ROOT):
                 f"manifests/{variant}.json has a 'driver' key: a manifest describes the kind only; "
                 "the Driver key is composed at flash time from --board"
             )
-        if not firmware_path(variant, root).is_file():
+        if not SLUG.match(variant):
+            problems.append(f"variant '{variant}' (manifests/{variant}.json) is not a slug")
+        firmware = firmware_path(variant, root)
+        if not firmware.is_file():
             problems.append(f"manifests/{variant}.json has no firmware/{variant}.yaml")
+        elif not re.search(rf"(?m)^  variant: {re.escape(variant)}$", firmware.read_text(encoding="utf-8")):
+            problems.append(
+                f"firmware/{variant}.yaml must declare the substitution `variant: {variant}` "
+                "(the manifest and the firmware are one variant: the name is the shared stem)"
+            )
 
     for path in sorted((root / "firmware").glob("*.yaml")):
         # firmware/secrets.yaml is the symlink ESPHome's secret lookup needs, not an entrypoint.
