@@ -33,7 +33,7 @@ jobs:
       # Not used by kind: firmware, but GitHub validates the whole called workflow up front and
       # its publish-image job requests packages: write; a caller that grants less fails to start.
       packages: write
-    uses: renewvan/hub/.github/workflows/release.yml@50d4ad5dc07d0a88741097cb0f87f9bc25ac9e6d
+    uses: renewvan/hub/.github/workflows/release.yml@a57cf701f8da1e4ff9be42f9c83c24964ea6e5c5
     with:
       kind: firmware
       esphome-version: "2026.9.1"
