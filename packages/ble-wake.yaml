@@ -24,7 +24,13 @@
 # GATT layout (UUIDs are the wire contract with dashboard/src/lib/bleWake.ts):
 #   service        7e1a0001-6f6e-4f3a-9c10-52656e657776
 #   command  (W)   7e1a0002-...   UTF-8 text  "<secret>|on"   (split at the LAST '|')
-#   status (R, N)  7e1a0003-...   UTF-8 text  "on" | "off"
+#   status (R, N)  7e1a0003-...   UTF-8 text  "on" | "off"   (the relay's state, not a write's verdict)
+#   result (R, N)  7e1a0004-...   UTF-8 text  "ok" | "denied" | "locked"   (the verdict on the LAST write)
+#
+# The result exists because the status cannot tell a right secret from a wrong one when the relay is
+# already on, and a refused BLE write gets no error back. It is notified (not just stored) after
+# EVERY write, even when it equals the previous one, so a phone subscribes first, writes, and waits
+# for the notification. It is "" until the first write after boot.
 #
 # Needs `ble_wake_secret` in secrets/<board>.yaml. WiFi and BLE share the ESP32's one radio: WiFi
 # keeps retrying while the router is off, which slows BLE. A winter-mode that stops WiFi is left
@@ -54,6 +60,14 @@ esp32_ble_server:
     - uuid: 7e1a0001-6f6e-4f3a-9c10-52656e657776
       advertise: true
       characteristics:
+        # Listed first: the command's on_write uses it, and ESPHome resolves an id only once its
+        # characteristic has been declared (listed after, the build fails "Circular dependency").
+        - id: ble_wake_result
+          uuid: 7e1a0004-6f6e-4f3a-9c10-52656e657776
+          read: true
+          write: false
+          notify: true
+          value: ""
         - id: ble_wake_command
           uuid: 7e1a0002-6f6e-4f3a-9c10-52656e657776
           read: false
@@ -63,8 +77,14 @@ esp32_ble_server:
             then:
               - lambda: |-
                   const uint32_t now = millis();
+                  // Tell the phone how this write ended: stored for a read, notified for a subscriber.
+                  auto verdict = [](const char *v) {
+                    id(ble_wake_result)->set_value(std::vector<uint8_t>(v, v + strlen(v)));
+                    id(ble_wake_result)->notify();
+                  };
                   if (id(ble_wake_locked_until) != 0 && (int32_t)(now - id(ble_wake_locked_until)) < 0) {
                     ESP_LOGW("ble_wake", "locked, write ignored");
+                    verdict("locked");
                     return;
                   }
                   const std::string text(x.begin(), x.end());
@@ -87,11 +107,13 @@ esp32_ble_server:
                       id(ble_wake_locked_until) = now + 60000;
                       ESP_LOGW("ble_wake", "locked for 60 s");
                     }
+                    verdict("denied");
                     return;
                   }
                   id(ble_wake_failures) = 0;
                   ESP_LOGI("ble_wake", "wake accepted");
                   id(relay_${wake_ch}).turn_on();
+                  verdict("ok");
         - id: ble_wake_status
           uuid: 7e1a0003-6f6e-4f3a-9c10-52656e657776
           read: true
