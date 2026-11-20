@@ -202,7 +202,7 @@ from the latest `v*` tag, tags `main`, creates the GitHub release, and compiles 
 variant) as a gate. Then flash from that tag with `scripts/flash.sh <variant>`. **No binary is attached**: WiFi,
 MQTT and the OTA password are compiled in from `secrets/<name>.yaml`, so a CI-built binary contains placeholders and
 cannot be flashed onto a van (and would publish a known OTA password). The process is shared by every
-renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`).
+Renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`).
 **One tag releases every variant.** The release run lists the variants (`python3 scripts/variants.py list`) and
 compiles each one from the tagged tree, all stamped with that one tag, as a matrix: a tag is only good if every
 variant (and so every board kind) builds. Boards are not part of a release: the gate builds use the fixed placeholder
