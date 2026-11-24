@@ -1,0 +1,124 @@
+# Hub power and Winter mode (renewvan/hub docs/adr/0033-winter-mode-and-hub-power.md).
+#
+# Hub power is the ONE channel that powers the hub (Raspberry Pi and router), chosen per board at
+# flash time: `hub_power: relay_<nn>` in secrets/<board>.yaml, passed by scripts/flash.sh as the
+# `hub_power` substitution (empty: this board has no Hub power, and everything here is inert).
+# Included by every relay variant, always; the channel itself (packages/relay-channel*.yaml) decides
+# at compile time whether it is Hub power.
+#
+# Wiring: Hub power is wired through the relay's NORMALLY-CLOSED contact and its pin is inverted, so
+# a released relay powers the hub. A reset, brownout, crash or OTA update releases every relay before
+# setup() runs, and that must never cut the Pi. On the bus `state` true still means "hub powered".
+# The cost is the coil held energised for the whole of Winter mode.
+#
+# Winter mode, a stage persisted in flash and written at once, not on the next flash flush:
+#   none      Hub power on. At first boot, after Hub wake, and after any `set true` on Hub power.
+#   counting  the hub plugin sent `renewvan/<driver>/winter-mode/set` true: the hub is shutting
+#             down; `winter_cut_delay` later the board cuts Hub power. Not cancellable. A reboot in
+#             this stage restarts the full delay (the Pi may still be halting).
+#   cut       Hub power off. A reboot in this stage switches it off again at boot (the Pi gets
+#             under a second of power, the one gap the wiring leaves).
+# `renewvan/<driver>/winter-mode` (retained) is true in counting and cut, false in none: published
+# the moment the command is taken (the hub plugin powers the Pi off only after that live `true`) and
+# on every connect, from the variant's `publish_retained_state` script.
+#
+# Hub power refuses a plain MQTT `set false` (packages/relay-channel*.yaml): its only way off is
+# Winter mode. Hub wake (packages/ble-wake.yaml) switches it on and resets the stage to none.
+
+substitutions:
+  # `hub_power` itself is declared in packages/base.yaml (Driver info reads it too).
+  # Long enough for the Pi to halt cleanly (Docker included); firmware-only, never on the wire.
+  winter_cut_delay: 90s
+
+globals:
+  # 0 none, 1 counting, 2 cut. Restored across reboot and OTA.
+  - id: winter_stage
+    type: int
+    restore_value: true
+    initial_value: "0"
+
+script:
+  # Stores the stage and commits it to flash now: the globals component saves a changed value on
+  # its next loop, so the commit waits one beat for it.
+  - id: winter_store
+    mode: queued
+    parameters:
+      stage: int
+    then:
+      - lambda: "id(winter_stage) = stage;"
+      - delay: 200ms
+      - lambda: "global_preferences->sync();"
+
+  # The board's Winter mode flag on the bus: true in counting and cut, false in none.
+  - id: publish_winter_mode
+    then:
+      - lambda: |-
+          const std::string value = id(winter_stage) == 0 ? "false" : "true";
+          id(mqtt_client).publish("renewvan/${driver}/winter-mode", value, 0, true);
+
+  # The countdown: Hub power off `winter_cut_delay` after the command (or after a reboot mid-count).
+  - id: winter_cut
+    mode: single
+    then:
+      - delay: ${winter_cut_delay}
+      - lambda: |-
+          switch_::Switch *hub = ${('id(relay_' ~ hub_power ~ ')') if hub_power else 'nullptr'};
+          if (hub == nullptr) return;
+          ESP_LOGW("winter", "cutting Hub power");
+          id(winter_store).execute(2);
+          hub->turn_off();
+
+  # Back to none: Hub wake, or Hub power switched on over the bus.
+  - id: winter_clear
+    then:
+      - if:
+          condition:
+            lambda: "return id(winter_stage) != 0;"
+          then:
+            - lambda: 'ESP_LOGI("winter", "Winter mode over");'
+            - script.stop: winter_cut
+            - script.execute:
+                id: winter_store
+                stage: 0
+            - script.execute: publish_winter_mode
+
+esphome:
+  on_boot:
+    # After the switches' setup: Hub power is already on (ALWAYS_ON, the same released relay as at
+    # reset), so only a Winter mode stage changes anything.
+    priority: 600
+    then:
+      - lambda: |-
+          switch_::Switch *hub = ${('id(relay_' ~ hub_power ~ ')') if hub_power else 'nullptr'};
+          if (hub == nullptr) return;
+          if (id(winter_stage) == 2) {
+            ESP_LOGW("winter", "Winter mode: Hub power stays off");
+            hub->turn_off();
+          } else if (id(winter_stage) == 1) {
+            ESP_LOGW("winter", "Winter mode: restarting the countdown after a reboot");
+            id(winter_cut).execute();
+          }
+
+mqtt:
+  on_message:
+    # From the hub plugin only (the broker lets no other account write it): unretained JSON true.
+    - topic: renewvan/${driver}/winter-mode/set
+      then:
+        - lambda: |-
+            switch_::Switch *hub = ${('id(relay_' ~ hub_power ~ ')') if hub_power else 'nullptr'};
+            if (hub == nullptr) {
+              ESP_LOGW("winter", "winter-mode/set ignored: this board has no Hub power");
+              return;
+            }
+            if (x != "true") {
+              ESP_LOGW("winter", "winter-mode/set is not JSON true, ignored");
+              return;
+            }
+            if (id(winter_stage) == 0) {
+              ESP_LOGW("winter", "Winter mode: Hub power off in ${winter_cut_delay}");
+              // Sets the stage at once (a script runs up to its first delay), then commits it.
+              id(winter_store).execute(1);
+              id(winter_cut).execute();
+            }
+            // Confirm (again, when already counting): the hub plugin waits for this live true.
+            id(publish_winter_mode).execute();

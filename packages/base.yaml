@@ -33,6 +33,9 @@ substitutions:
   version: dev
   manufacturer: ""
   homepage: ""
+  # The channel key (`relay_<nn>`) of this board's Hub power, or empty (packages/hub-power.yaml).
+  # From the build: scripts/flash.sh reads it from secrets/<board>.yaml.
+  hub_power: ""
 
 esphome:
   name: ${device_name}
@@ -141,6 +144,8 @@ mqtt:
           if (std::string("${homepage}") != "") root["homepage"] = "${homepage}";
           root["version"] = "${version}";
           root["board_serial"] = get_mac_address_pretty();
+          // Hub power, as the relay's bus id `<board>-<nn>` (renewvan/hub ADR 0033), only when set.
+          if (std::string("${hub_power}") != "") root["hub_power"] = "${(board ~ '-' ~ hub_power[6:]) if hub_power else ''}";
           // The address DHCP gave this board, so Settings > Drivers can show where to reach it.
           // The first set IPv4 address (an IPv6 link-local also appears in this list). Omitted,
           // never "0.0.0.0", when there is none: the schema rejects the unspecified address.

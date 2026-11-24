@@ -68,7 +68,8 @@ jobs:
             echo "version=${version}"
             echo "substitutions<<EOF"
             echo "version=${version}"
-            python3 scripts/manifest_substitutions.py "${VARIANT}" --board "${CI_BOARD}"
+            # With Hub power on relay_01: the build compiles the Winter mode path, the riskier one.
+            python3 scripts/manifest_substitutions.py "${VARIANT}" --board "${CI_BOARD}" --hub-power relay_01
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -92,10 +93,18 @@ jobs:
           manifest_args=()
           while IFS= read -r -d '' arg; do
             manifest_args+=("${arg}")
-          done < <(python3 scripts/manifest_substitutions.py "${VARIANT}" --board "${CI_BOARD}" --esphome-args)
+          done < <(python3 scripts/manifest_substitutions.py "${VARIANT}" --board "${CI_BOARD}" --hub-power relay_01 --esphome-args)
           docker run --rm -v "$PWD":/config -w /config --user "$(id -u):$(id -g)" \
             --entrypoint esphome "ghcr.io/esphome/esphome:${ESPHOME_VERSION}" \
             -s version "${VERSION}" "${manifest_args[@]}" config "firmware/${VARIANT}.yaml" > resolved.yaml
+          # A board without Hub power (every board but one) must resolve too: the package is inert.
+          plain_args=()
+          while IFS= read -r -d '' arg; do
+            plain_args+=("${arg}")
+          done < <(python3 scripts/manifest_substitutions.py "${VARIANT}" --board "${CI_BOARD}" --esphome-args)
+          docker run --rm -v "$PWD":/config -w /config --user "$(id -u):$(id -g)" \
+            --entrypoint esphome "ghcr.io/esphome/esphome:${ESPHOME_VERSION}" \
+            -s version "${VERSION}" "${plain_args[@]}" config "firmware/${VARIANT}.yaml" > /dev/null
 
       - name: Guard the stamped version, the variant and the board
         run: |

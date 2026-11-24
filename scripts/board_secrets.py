@@ -9,7 +9,8 @@ the other. The repo-root `secrets.yaml` is NOT read here: it only holds the fake
 
 `secrets/<board>.yaml` is required, so a missing file is an error that says how to create it. It is
 flat `key: value` lines (what secrets.yaml.example shows); values are copied through untouched, so
-quoting is preserved. `ota_address` is not an ESPHome secret: flash.sh reads it to pick the OTA target.
+quoting is preserved. `ota_address` and `hub_power` are not ESPHome secrets: flash.sh reads them to pick
+the OTA target and the board's Hub power channel.
 
 usage: board_secrets.py <board> --write PATH   write the board's file (mode 600) for ESPHome to read
        board_secrets.py <board> --get KEY      print KEY's value (unquoted), or nothing when unset
