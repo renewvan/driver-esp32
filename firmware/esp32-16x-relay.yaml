@@ -13,7 +13,8 @@
 #   * Every channel is OFF after any reset, brownout, update or crash (restore_mode ALWAYS_OFF),
 #     except Hub power, which is wired normally-closed and stays ON (packages/hub-power.yaml).
 #   * Relays HOLD their last state while WiFi or the broker is down: no timeout-to-off, no
-#     local control. A manual override and any interlock (pump dry-run, heater thermal cutoff)
+#     local control (Bluetooth Hub wake and Direct control are the one bounded exception,
+#     packages/ble-wake.yaml). A manual override and any interlock (pump dry-run, heater thermal cutoff)
 #     are hardware concerns, never this firmware's.
 #   * No `api:` block: ESPHome reboots a device with no API client every 15 minutes, and a
 #     reboot is a real fault on this board. No `web_server:` either: it would be an
@@ -142,5 +143,5 @@ packages:
   # Hub power and Winter mode (packages/hub-power.yaml): which channel powers the hub is the board's
   # `hub_power` (secrets/<board>.yaml, passed by scripts/flash.sh); without it both are inert.
   hub_power: !include ../packages/hub-power.yaml
-  # BLE wake: a phone near the van switches Hub power ON with no WiFi or hub (packages/ble-wake.yaml).
+  # Bluetooth for the mobile app: Hub wake and Direct control, with no WiFi or hub (packages/ble-wake.yaml).
   ble_wake: !include ../packages/ble-wake.yaml

@@ -36,6 +36,9 @@ substitutions:
   # The channel key (`relay_<nn>`) of this board's Hub power, or empty (packages/hub-power.yaml).
   # From the build: scripts/flash.sh reads it from secrets/<board>.yaml.
   hub_power: ""
+  # The channel keys open to Direct control over Bluetooth, comma-separated, or empty
+  # (packages/ble-wake.yaml). From the build: scripts/flash.sh reads them from secrets/<board>.yaml.
+  ble_channels: ""
 
 esphome:
   name: ${device_name}

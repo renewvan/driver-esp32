@@ -16,7 +16,13 @@ Without --board the script fails (exit 2, nothing on stdout) rather than build p
 (packages/hub-power.yaml), from `hub_power` in secrets/<board>.yaml. It must be one of the variant's
 channels, so it needs a variant name, not a manifest path. Absent or empty: no Hub power.
 
-usage: manifest_substitutions.py VARIANT|MANIFEST_PATH --board NAME [--hub-power CH] [--esphome-args]
+--ble-channels CH,CH (optional) adds `ble_channels`: the channel keys the phone may switch over
+Bluetooth while the hub is unreachable (Direct control, packages/ble-wake.yaml), from `ble_channels`
+in secrets/<board>.yaml. Each must be one of the variant's channels, listed once, and never the Hub
+power (whose one Bluetooth action is Hub wake). Absent or empty: none.
+
+usage: manifest_substitutions.py VARIANT|MANIFEST_PATH --board NAME [--hub-power CH]
+                                 [--ble-channels CH,CH] [--esphome-args]
        manifest_substitutions.py esp32-16x-relay --board front
        manifest_substitutions.py manifests/esp32-16x-relay.json
 """
@@ -46,18 +52,40 @@ def flatten(manifest):
     return {key: cpp_escape(value) for key, value in out.items()}
 
 
+def variant_channels(variant):
+    """The variant's channel keys, read from its firmware yaml."""
+    text = variants.firmware_path(variant).read_text(encoding="utf-8")
+    return [ch for ch, _ in check_relay_channels.PACKAGE.findall(text)]
+
+
 def hub_power_problem(channel, variant):
     """Why `channel` cannot be this variant's Hub power, or None when it can."""
     if variant is None:
         return "--hub-power needs a variant name, not a manifest path"
-    path = variants.firmware_path(variant)
     try:
-        text = path.read_text(encoding="utf-8")
+        channels = variant_channels(variant)
     except OSError as err:
         return f"--hub-power: {err}"
-    channels = [ch for ch, _ in check_relay_channels.PACKAGE.findall(text)]
     if channel not in channels:
         return f"--hub-power '{channel}' is not a channel of {variant} ({', '.join(channels)})"
+    return None
+
+
+def ble_channels_problem(listed, variant, hub_power):
+    """Why these channel keys cannot be the board's Direct control channels, or None."""
+    if variant is None:
+        return "--ble-channels needs a variant name, not a manifest path"
+    try:
+        channels = variant_channels(variant)
+    except OSError as err:
+        return f"--ble-channels: {err}"
+    for channel in listed:
+        if channel not in channels:
+            return f"--ble-channels '{channel}' is not a channel of {variant} ({', '.join(channels)})"
+        if channel == hub_power:
+            return f"--ble-channels '{channel}' is the Hub power: its one Bluetooth action is Hub wake"
+        if listed.count(channel) > 1:
+            return f"--ble-channels lists '{channel}' twice"
     return None
 
 
@@ -76,6 +104,12 @@ def main():
         default="",
         metavar="CH",
         help="the channel key (relay_<nn>) that powers the hub; empty or absent: none",
+    )
+    parser.add_argument(
+        "--ble-channels",
+        default="",
+        metavar="CH,CH",
+        help="the channel keys (relay_<nn>) open to Direct control over Bluetooth; empty: none",
     )
     parser.add_argument(
         "--esphome-args",
@@ -110,6 +144,13 @@ def main():
             print(problem, file=sys.stderr)
             return 1
         values["hub_power"] = args.hub_power
+    listed = [ch.strip() for ch in args.ble_channels.split(",") if ch.strip()]
+    if listed:
+        problem = ble_channels_problem(listed, variant, args.hub_power)
+        if problem:
+            print(problem, file=sys.stderr)
+            return 1
+        values["ble_channels"] = ",".join(listed)
 
     if args.esphome_args:
         for key, value in values.items():

@@ -115,5 +115,5 @@ packages:
   # Hub power and Winter mode (packages/hub-power.yaml): which channel powers the hub is the board's
   # `hub_power` (secrets/<board>.yaml, passed by scripts/flash.sh); without it both are inert.
   hub_power: !include ../packages/hub-power.yaml
-  # BLE wake: a phone near the van switches Hub power ON with no WiFi or hub (packages/ble-wake.yaml).
+  # Bluetooth for the mobile app: Hub wake and Direct control, with no WiFi or hub (packages/ble-wake.yaml).
   ble_wake: !include ../packages/ble-wake.yaml

@@ -51,8 +51,9 @@ manifests/<variant>.json    the static fields of the kind (the single source, se
 packages/base.yaml          shared by every variant: WiFi, OTA, logger, captive portal, MQTT, Driver info/health
 packages/relay-channel.yaml one relay channel, included once per channel by the relay variant
 packages/hub-power.yaml     Hub power and Winter mode, in every relay variant; inert on a board without `hub_power`
-packages/ble-wake.yaml      Hub wake over Bluetooth: switches Hub power on, in every relay variant
-scripts/                    flash.sh, clear_board.py, manifest_substitutions.py, variants.py, and the CI guards
+packages/ble-wake.yaml      Bluetooth for the mobile app: Hub wake and Direct control, in every relay variant
+scripts/                    flash.sh, clear_board.py, manifest_substitutions.py, variants.py, ble_command.py
+                            (a bench Bluetooth client), and the CI guards
 secrets/<board>.yaml        ALL of one board's secrets in one file (gitignored); flash.sh builds from it
 firmware/secrets.yaml       gitignored; only for a plain `esphome config` (CI copies the example there)
 ```
@@ -97,15 +98,16 @@ scripts/flash.sh --list                        # the variants
 Everything a board needs is in **one** gitignored file, `secrets/<name>.yaml`, named after the `--board` you flash.
 Copy `secrets.yaml.example` to it and fill in every key:
 
-| Key                                                       | Value                                                                                                             |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `wifi_ssid`, `wifi_password`, `wifi_ap_fallback_password` | the van WiFi, and the password of the board's recovery access point                                               |
-| `mqtt_broker`, `mqtt_port`                                | the van bus, the same Mosquitto every other driver publishes to                                                   |
-| `mqtt_username`, `mqtt_password`                          | the board's broker account `esp32-<name>` and its password, the hub's `MQTT_ESP32_<NAME>_PASSWORD` (hub ADR 0027) |
-| `ota_password`                                            | its own, so updating one board needs no other board's password                                                    |
-| `ble_wake_secret`                                         | what a phone sends to power the hub on over Bluetooth (`openssl rand -hex 12`)                                    |
-| `ota_address`                                             | optional: the board's address, used as the OTA target when `--device` is not given                                |
-| `hub_power`                                               | optional, on ONE board per van: the channel key (`relay_<nn>`) that powers the hub ("Hub power and Winter mode")  |
+| Key                                                       | Value                                                                                                               |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `wifi_ssid`, `wifi_password`, `wifi_ap_fallback_password` | the van WiFi, and the password of the board's recovery access point                                                 |
+| `mqtt_broker`, `mqtt_port`                                | the van bus, the same Mosquitto every other driver publishes to                                                     |
+| `mqtt_username`, `mqtt_password`                          | the board's broker account `esp32-<name>` and its password, the hub's `MQTT_ESP32_<NAME>_PASSWORD` (hub ADR 0027)   |
+| `ota_password`                                            | its own, so updating one board needs no other board's password                                                      |
+| `ble_wake_secret`                                         | the key that signs every Bluetooth command (`openssl rand -hex 12`); typed once into the mobile app                 |
+| `ota_address`                                             | optional: the board's address, used as the OTA target when `--device` is not given                                  |
+| `hub_power`                                               | optional, on ONE board per van: the channel key (`relay_<nn>`) that powers the hub ("Hub power and Winter mode")    |
+| `ble_channels`                                            | optional: channel keys open to Direct control, comma-separated (`relay_03,relay_04`); never Hub power ("Bluetooth") |
 
 The file is flat `key: value` lines (`secrets.yaml.example` lists every key). `flash.sh` copies it with
 `scripts/board_secrets.py` into `.build/<name>/`, a gitignored staging copy of the build that only that board's
@@ -257,6 +259,34 @@ ends a Winter mode. Winter mode is a stage kept in flash and committed at once:
 The `true` published when the command is taken is the hub plugin's confirmation: it powers the Pi off only after
 it. The state topic is also published on every connect. Only the hub plugin's broker account may write
 `winter-mode/set`. A board without Hub power ignores it.
+
+The countdown cannot be cancelled: the Pi is already halting. A Hub wake (or `set true`) during it is queued: the cut
+happens on time, then Hub power comes back on 5 s later (`winter_wake_gap`, so the Pi's supply drains and it boots)
+and the stage is `none`. The queue is RAM only: after a reboot mid-countdown the cut stands until the next Hub wake.
+
+## Bluetooth: Hub wake and Direct control
+
+Every relay variant runs a BLE server for the Renewvan mobile app (renewvan/hub ADR 0034;
+`packages/ble-wake.yaml` holds the GATT contract):
+
+- **Hub wake**: switch Hub power on, which ends Winter mode.
+- **Direct control**: switch the channels listed in `ble_channels` (secrets/<board>.yaml, none by default, never Hub
+  power) on or off. The app uses it only while the Renewvan bus is unreachable; every change still reaches the bus
+  through the channel's own `state` once the board is connected.
+
+Every command is challenge-response: the board serves a single-use nonce, and accepts a command only with
+`HMAC-SHA256(ble_wake_secret, "<nonce>|<nn>|<on|off>")`, so a recorded command cannot be replayed or edited. Three bad
+commands in a row lock commands for 60 s. The board advertises its Driver key `esp32-<board>` (cut to 20 characters)
+as its BLE name.
+
+`scripts/ble_command.py` is a bench client for the same contract (`pip install bleak`), reading the secret from
+`secrets/<board>.yaml`:
+
+```bash
+python3 scripts/ble_command.py <board> info            # board name, channels, states
+python3 scripts/ble_command.py <board> 03 on           # Direct control (or Hub wake on the Hub power channel)
+python3 scripts/ble_command.py <board> --replay 03 on  # the replayed write must come back `stale`
+```
 
 ## CI
 
@@ -434,4 +464,13 @@ With `hub_power` set (a lamp on the normally-closed contact stands in for the Pi
 9. `mosquitto_pub -t renewvan/esp32-<name>/winter-mode/set -m true`: `renewvan/esp32-<name>/winter-mode` becomes
    `true` at once and the lamp goes out 90 s later. Power-cycle the board: the lamp stays out.
 10. Repeat 9 and power-cycle the board during the 90 s: the lamp goes out 90 s after the board is back.
-11. Hub wake from a phone (or `set true` on the relay): the lamp lights and `winter-mode` becomes `false`.
+11. Hub wake from a phone or `scripts/ble_command.py <name> <nn> on` (or `set true` on the relay): the lamp lights and
+    `winter-mode` becomes `false`.
+12. Repeat 9 and Hub wake during the 90 s: the lamp goes out on time, comes back 5 s later, `winter-mode` `false`.
+
+Bluetooth, from `scripts/ble_command.py` near the board (with `ble_channels` set):
+
+13. `info` shows the board name, `<hub nn>|<mask>` and the states; `<nn> on|off` on a listed channel answers `ok` and the
+    relay's bus `state` follows; an unlisted channel and `off` on Hub power answer `refused`.
+14. `--replay <nn> on`: the second write answers `stale`.
+15. Three commands with a wrong secret answer `denied`, then even a right one answers `locked` for 60 s.
