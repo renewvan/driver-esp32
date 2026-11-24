@@ -27,10 +27,16 @@ switch:
   - platform: gpio
     id: relay_${ch}
     name: "${ch} relay"
-    pin: ${gpio}
+    # Hub power (packages/hub-power.yaml) is wired normally-closed: inverted, so a released relay
+    # powers the hub.
+    pin:
+      number: ${gpio}
+      inverted: "${'true' if ch == hub_power else 'false'}"
     # Every channel is off after ANY reset, brownout, update or crash. No state is restored,
-    # so a stale "restore last state" can never switch a load back on.
-    restore_mode: ALWAYS_OFF
+    # so a stale "restore last state" can never switch a load back on. The one exception is Hub
+    # power: on, which is the released relay it already was at reset, so the Pi never sees a gap;
+    # packages/hub-power.yaml switches it off at boot when Winter mode has cut it.
+    restore_mode: "${'ALWAYS_ON' if ch == hub_power else 'ALWAYS_OFF'}"
     internal: true
     on_state:
       # State is published only after the physical output changed (it is the device's truth,
@@ -47,9 +53,17 @@ mqtt:
     - topic: renewvan/relay/${board}-${nn}/set
       then:
         - lambda: |-
+            // Hub power (packages/hub-power.yaml): its only way off is Winter mode, so a plain
+            // `set false` is refused, and `set true` ends a Winter mode.
+            constexpr bool kHubPower = ${'true' if ch == hub_power else 'false'};
             if (x == "true") {
               id(relay_${ch}).turn_on();
+              if (kHubPower) id(winter_clear).execute();
             } else if (x == "false") {
+              if (kHubPower) {
+                ESP_LOGW("relay", "${board}-${nn} is Hub power: set false refused, use Winter mode");
+                return;
+              }
               id(relay_${ch}).turn_off();
             } else {
               ESP_LOGW("relay", "${board}-${nn}: set is not JSON true/false, ignored");

@@ -1,19 +1,21 @@
-# BLE wake: switch ONE relay channel ON over Bluetooth, with no WiFi, router or hub.
+# BLE wake (Hub wake, renewvan/hub docs/adr/0034): switch Hub power ON over Bluetooth, with no WiFi,
+# router or hub.
 #
-# Use case: the van is parked for the winter with the hub (Raspberry Pi) and router powered down
-# through this board's relay. The board itself stays powered, and its owner, standing near the van,
-# powers the hub back on from a phone (the dashboard's /wake page, Web Bluetooth).
+# Use case: the van is in Winter mode (packages/hub-power.yaml), the hub (Raspberry Pi) and router
+# powered down through this board's Hub power relay. The board itself stays powered, and its owner,
+# standing near the van, powers the hub back on from the Renewvan phone app.
 #
-# Included once, by a relay variant, after packages/relay-channel.yaml:
-#   ble_wake: !include { file: ../packages/ble-wake.yaml, vars: { wake_ch: relay_01 } }
-# vars: wake_ch = the channel key (`relay_<nn>`, as in the variant's `packages:`) that powers the
-# hub. Its ESPHome switch id is `relay_${wake_ch}`.
+# Included once, by a relay variant, after packages/relay-channel.yaml and packages/hub-power.yaml:
+#   ble_wake: !include ../packages/ble-wake.yaml
+# The channel is the board's Hub power (the `hub_power` substitution, from secrets/<board>.yaml). On
+# a board without Hub power the service is still advertised but refuses every write (`denied`).
+# A wake ends Winter mode: the stage goes back to none (packages/hub-power.yaml).
 #
 # This is deliberately a NARROW second control path, an exception to the "no local control" rule
 # in the header of firmware/esp32-16x-relay.yaml, and it is bounded:
-#   * it can only turn that ONE channel ON. There is no BLE "off": cutting the hub's power is a
-#     shutdown the hub must finish first (the dashboard asks it to over MQTT, then opens the relay),
-#     because a hard cut risks the Pi's SD card;
+#   * it can only turn Hub power ON. There is no BLE "off": cutting the hub's power is Winter mode,
+#     a shutdown the hub finishes before this board cuts it (packages/hub-power.yaml), because a
+#     hard cut risks the Pi's SD card;
 #   * every write must carry the shared secret `ble_wake_secret` (secrets/<board>.yaml), compared
 #     in constant time; three wrong secrets in a row lock the command for 60 seconds;
 #   * the state still reaches the bus: the channel's own `on_state` (packages/relay-channel.yaml)
@@ -21,7 +23,8 @@
 # The secret is a deterrent, not cryptography: a BLE write is plaintext on the air and can be
 # replayed by someone who sniffs it. The only effect of a replay is powering the owner's own hub.
 #
-# GATT layout (UUIDs are the wire contract with dashboard/src/lib/bleWake.ts):
+# GATT layout (UUIDs are the wire contract with the phone app; a challenge-response replaces this
+# plaintext command next, driver-esp32#27):
 #   service        7e1a0001-6f6e-4f3a-9c10-52656e657776
 #   command  (W)   7e1a0002-...   UTF-8 text  "<secret>|on"   (split at the LAST '|')
 #   status (R, N)  7e1a0003-...   UTF-8 text  "on" | "off"   (the relay's state, not a write's verdict)
@@ -110,9 +113,16 @@ esp32_ble_server:
                     verdict("denied");
                     return;
                   }
+                  switch_::Switch *hub = ${('id(relay_' ~ hub_power ~ ')') if hub_power else 'nullptr'};
+                  if (hub == nullptr) {
+                    ESP_LOGW("ble_wake", "this board has no Hub power");
+                    verdict("denied");
+                    return;
+                  }
                   id(ble_wake_failures) = 0;
                   ESP_LOGI("ble_wake", "wake accepted");
-                  id(relay_${wake_ch}).turn_on();
+                  hub->turn_on();
+                  id(winter_clear).execute();
                   verdict("ok");
         - id: ble_wake_status
           uuid: 7e1a0003-6f6e-4f3a-9c10-52656e657776
@@ -121,14 +131,16 @@ esp32_ble_server:
           notify: true
           value: "off"
 
-# Keep the status characteristic in step with the physical output, and notify a connected phone.
-# An internal template binary sensor that follows the wake channel's switch, not an `on_state`
-# merged into that switch: the status is a BLE concern and packages/relay-channel.yaml stays as is.
+# Keep the status characteristic in step with Hub power, and notify a connected phone. An internal
+# template binary sensor that follows the switch, not an `on_state` merged into it: the status is a
+# BLE concern and packages/relay-channel.yaml stays as is. `off` on a board without Hub power.
 binary_sensor:
   - platform: template
     id: ble_wake_relay_state
     internal: true
-    lambda: "return id(relay_${wake_ch}).state;"
+    lambda: |-
+      switch_::Switch *hub = ${('id(relay_' ~ hub_power ~ ')') if hub_power else 'nullptr'};
+      return hub != nullptr && hub->state;
     on_state:
       - ble_server.characteristic.set_value:
           id: ble_wake_status

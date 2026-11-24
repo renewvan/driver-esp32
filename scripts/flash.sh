@@ -13,7 +13,8 @@
 # at most 16 characters, and not ending in a hyphen plus numerals (scripts/variants.py).
 #
 # Secrets are per board and live in ONE file, secrets/<name>.yaml (WiFi, broker address and account,
-# OTA password, BLE wake secret, optional `ota_address`). scripts/board_secrets.py copies it into the
+# OTA password, BLE wake secret, optional `ota_address` and `hub_power`). `hub_power` (a channel key,
+# `relay_<nn>`) makes that channel the board's Hub power (packages/hub-power.yaml). scripts/board_secrets.py copies it into the
 # gitignored staging tree .build/<name>/ (a copy of the variant's yaml next to its own secrets.yaml, since
 # ESPHome reads secrets next to the entrypoint); the repo-root secrets.yaml is not read. A board with no
 # secrets/<name>.yaml is refused. With no `--device`, an `ota_address` in the board's secrets is the
@@ -105,18 +106,21 @@ if [[ $has_device -eq 0 ]]; then
   fi
 fi
 
+# The board's Hub power, if any (not an ESPHome secret: it becomes the `hub_power` substitution).
+hub_power="$(python3 scripts/board_secrets.py "$board" --get hub_power)"
+
 # Read into a variable first: a process substitution would hide a manifest error from
 # `set -e`, and the flash would go ahead with the placeholders unexpanded.
 manifest_args=()
 while IFS= read -r -d '' arg; do
   manifest_args+=("$arg")
-done < <(python3 scripts/manifest_substitutions.py "$variant" --board "$board" --esphome-args || echo FAILED >&2)
+done < <(python3 scripts/manifest_substitutions.py "$variant" --board "$board" --hub-power "$hub_power" --esphome-args || echo FAILED >&2)
 
 if [[ ${#manifest_args[@]} -eq 0 ]]; then
   echo "scripts/flash.sh: manifests/${variant}.json produced no substitutions; refusing to flash" >&2
   exit 1
 fi
 
-echo "Flashing firmware/${variant}.yaml as board '${board}' (Driver esp32-${board}), version: $version" >&2
+echo "Flashing firmware/${variant}.yaml as board '${board}' (Driver esp32-${board}), version: $version, Hub power: ${hub_power:-none}" >&2
 # `-s` is a global esphome option, so it goes before `run` (the run subcommand has no -s).
 exec esphome -s version "$version" "${manifest_args[@]}" run "${stage}/firmware/${variant}.yaml" ${run_args[@]+"${run_args[@]}"}

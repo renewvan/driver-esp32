@@ -50,6 +50,8 @@ firmware/<variant>.yaml     the ESPHome entrypoint of one variant: board, hardwa
 manifests/<variant>.json    the static fields of the kind (the single source, see "Driver info and health"); no `driver`
 packages/base.yaml          shared by every variant: WiFi, OTA, logger, captive portal, MQTT, Driver info/health
 packages/relay-channel.yaml one relay channel, included once per channel by the relay variant
+packages/hub-power.yaml     Hub power and Winter mode, in every relay variant; inert on a board without `hub_power`
+packages/ble-wake.yaml      Hub wake over Bluetooth: switches Hub power on, in every relay variant
 scripts/                    flash.sh, clear_board.py, manifest_substitutions.py, variants.py, and the CI guards
 secrets/<board>.yaml        ALL of one board's secrets in one file (gitignored); flash.sh builds from it
 firmware/secrets.yaml       gitignored; only for a plain `esphome config` (CI copies the example there)
@@ -101,8 +103,9 @@ Copy `secrets.yaml.example` to it and fill in every key:
 | `mqtt_broker`, `mqtt_port`                                | the van bus, the same Mosquitto every other driver publishes to                                                   |
 | `mqtt_username`, `mqtt_password`                          | the board's broker account `esp32-<name>` and its password, the hub's `MQTT_ESP32_<NAME>_PASSWORD` (hub ADR 0027) |
 | `ota_password`                                            | its own, so updating one board needs no other board's password                                                    |
-| `ble_wake_secret`                                         | `esp32-16x-relay` only: what a phone sends to power the hub on over Bluetooth (`openssl rand -hex 12`)            |
+| `ble_wake_secret`                                         | what a phone sends to power the hub on over Bluetooth (`openssl rand -hex 12`)                                    |
 | `ota_address`                                             | optional: the board's address, used as the OTA target when `--device` is not given                                |
+| `hub_power`                                               | optional, on ONE board per van: the channel key (`relay_<nn>`) that powers the hub ("Hub power and Winter mode")  |
 
 The file is flat `key: value` lines (`secrets.yaml.example` lists every key). `flash.sh` copies it with
 `scripts/board_secrets.py` into `.build/<name>/`, a gitignored staging copy of the build that only that board's
@@ -229,6 +232,32 @@ OTA update, or to find it on the router). It is read when the info is published,
 as the board's last (re)connect to the broker, and it is omitted, never `0.0.0.0`, while the board
 has no address. Reserve the address on your router if you want it to stay put.
 
+## Hub power and Winter mode
+
+One board per van may power the hub (Raspberry Pi and router) through one of its relays: **Hub power**
+(renewvan/hub ADR 0033). Set `hub_power: relay_<nn>` in that board's `secrets/<board>.yaml`; `flash.sh` passes it
+to the build (`manifest_substitutions.py --hub-power`, checked against the variant's channels) and the board
+announces it in its Driver info as the relay's bus id (`"hub_power": "<board>-<nn>"`). Without it the board has no
+Hub power and `packages/hub-power.yaml` does nothing.
+
+**Wire Hub power through the relay's normally-closed contact.** The firmware inverts that channel, so a released
+relay powers the hub: every relay is released from reset until `setup()`, so an OTA update, crash or brownout of
+the board never cuts the Pi. On the bus `state` still reads `true` for "hub powered". The coil is energised only
+while Winter mode holds the hub off.
+
+Hub power is reserved: a plain `set false` is refused and logged (its only way off is Winter mode), and `set true`
+ends a Winter mode. Winter mode is a stage kept in flash and committed at once:
+
+| Stage      | Entered when                                                | At boot                       | `renewvan/<driver>/winter-mode` |
+| ---------- | ----------------------------------------------------------- | ----------------------------- | ------------------------------- |
+| `none`     | first boot, Hub wake, `set true` on Hub power               | Hub power on                  | `false`                         |
+| `counting` | the hub plugin's `renewvan/<driver>/winter-mode/set` `true` | the full 90 s again, then cut | `true`                          |
+| `cut`      | 90 s after the command (`winter_cut_delay`): Hub power off  | Hub power off                 | `true`                          |
+
+The `true` published when the command is taken is the hub plugin's confirmation: it powers the Pi off only after
+it. The state topic is also published on every connect. Only the hub plugin's broker account may write
+`winter-mode/set`. A board without Hub power ignores it.
+
 ## CI
 
 `.github/workflows/validate.yml` runs the script tests and `variants.py check`, then, **for every variant
@@ -321,7 +350,8 @@ subscribe: publishers must not retain commands.
 #### Boot and failure behaviour
 
 - **Every channel is off after any restart** (reset, brownout, update, crash). No state is restored.
-  The device alone owns boot state; the hub never re-asserts a desired state.
+  The device alone owns boot state; the hub never re-asserts a desired state. The one exception is
+  **Hub power**, which stays on (see "Hub power and Winter mode").
 - **Relays hold their last state while WiFi or the broker is down.** There is no firmware
   timeout-to-off and no local control. A manual override is a hardware concern.
 - **A `set` published while the device was offline is not replayed on reconnect** (`clean_session`).
@@ -395,3 +425,13 @@ manual:
    power-cycle after 60 seconds and confirm it persists.
 6. Unplug the board's network: its `health` becomes `offline`, the retained `info` stays, and the relays
    hold their state. With a second board on the bus, only the unplugged board's Driver goes `offline`.
+
+With `hub_power` set (a lamp on the normally-closed contact stands in for the Pi):
+
+7. The info carries `"hub_power": "<name>-<nn>"`; the lamp is lit; `set false` on that relay is refused (logged,
+   lamp stays lit).
+8. OTA-update and power-cycle the board: the lamp never goes out.
+9. `mosquitto_pub -t renewvan/esp32-<name>/winter-mode/set -m true`: `renewvan/esp32-<name>/winter-mode` becomes
+   `true` at once and the lamp goes out 90 s later. Power-cycle the board: the lamp stays out.
+10. Repeat 9 and power-cycle the board during the 90 s: the lamp goes out 90 s after the board is back.
+11. Hub wake from a phone (or `set true` on the relay): the lamp lights and `winter-mode` becomes `false`.

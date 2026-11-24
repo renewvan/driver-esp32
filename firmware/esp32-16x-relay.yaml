@@ -10,7 +10,8 @@
 #   renewvan/relay/<id>/name/set  unretained JSON string, 1..63 bytes
 #
 # Safety, by design (see the ADR):
-#   * Every channel is OFF after any reset, brownout, update or crash (restore_mode ALWAYS_OFF).
+#   * Every channel is OFF after any reset, brownout, update or crash (restore_mode ALWAYS_OFF),
+#     except Hub power, which is wired normally-closed and stays ON (packages/hub-power.yaml).
 #   * Relays HOLD their last state while WiFi or the broker is down: no timeout-to-off, no
 #     local control. A manual override and any interlock (pump dry-run, heater thermal cutoff)
 #     are hardware concerns, never this firmware's.
@@ -96,6 +97,8 @@ script:
               id(mqtt_client).publish(base + "/name", payload, 0, true);
             }
           }
+      # The board's Winter mode flag (packages/hub-power.yaml), so a stale `true` is corrected.
+      - script.execute: publish_winter_mode
 
 # Sixteen channels, one line each. Adding or renaming one is a one-line change: `ch` is the id
 # on the bus (and in the topics), `bit` is the shift-register output 0..15. ESPHome rejects a
@@ -136,6 +139,8 @@ packages:
     !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_15, nn: "15", bit: 14 } }
   relay_16:
     !include { file: ../packages/relay-channel.yaml, vars: { ch: relay_16, nn: "16", bit: 15 } }
-  # BLE wake: a phone near the van can switch the channel that powers the hub ON with no WiFi or
-  # hub (packages/ble-wake.yaml). `wake_ch` is that channel; relay_01 until the board is wired.
-  ble_wake: !include { file: ../packages/ble-wake.yaml, vars: { wake_ch: relay_01 } }
+  # Hub power and Winter mode (packages/hub-power.yaml): which channel powers the hub is the board's
+  # `hub_power` (secrets/<board>.yaml, passed by scripts/flash.sh); without it both are inert.
+  hub_power: !include ../packages/hub-power.yaml
+  # BLE wake: a phone near the van switches Hub power ON with no WiFi or hub (packages/ble-wake.yaml).
+  ble_wake: !include ../packages/ble-wake.yaml

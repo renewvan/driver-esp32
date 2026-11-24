@@ -205,3 +205,40 @@ class ManifestSubstitutions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HubPowerTest(unittest.TestCase):
+    def sub(self, *extra):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "esp32-16x-relay", "--board", "front", *extra],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_hub_power_adds_the_channel_key(self):
+        result = self.sub("--hub-power", "relay_01")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(lines(result)["hub_power"], "relay_01")
+
+    def test_without_hub_power_there_is_no_hub_power_line(self):
+        self.assertNotIn("hub_power", lines(self.sub()))
+        self.assertNotIn("hub_power", lines(self.sub("--hub-power", "")))
+
+    def test_a_channel_the_variant_does_not_have_is_rejected_with_nothing_on_stdout(self):
+        result = self.sub("--hub-power", "relay_17")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("relay_17", result.stderr)
+
+    def test_the_8x_variant_has_eight_channels(self):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "esp32-8x-relay", "--board", "front", "--hub-power", "relay_09"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_hub_power_needs_a_variant_name_not_a_path(self):
+        result = run(FULL, "--hub-power", "relay_01")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("variant name", result.stderr)
