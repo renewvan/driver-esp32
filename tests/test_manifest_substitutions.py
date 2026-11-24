@@ -242,3 +242,40 @@ class HubPowerTest(unittest.TestCase):
         result = run(FULL, "--hub-power", "relay_01")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("variant name", result.stderr)
+
+
+class BleChannelsTest(unittest.TestCase):
+    """--ble-channels: the board's Direct control allowlist (packages/ble-wake.yaml)."""
+
+    def sub(self, *extra, variant="esp32-16x-relay"):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), variant, "--board", "front", *extra],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_listed_channels_pass_through_comma_separated(self):
+        result = self.sub("--ble-channels", "relay_03, relay_04")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(lines(result)["ble_channels"], "relay_03,relay_04")
+
+    def test_none_by_default(self):
+        self.assertNotIn("ble_channels", lines(self.sub()))
+        self.assertNotIn("ble_channels", lines(self.sub("--ble-channels", "")))
+
+    def test_hub_power_is_never_a_direct_control_channel(self):
+        result = self.sub("--hub-power", "relay_01", "--ble-channels", "relay_03,relay_01")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Hub power", result.stderr)
+
+    def test_a_channel_the_variant_does_not_have_is_rejected(self):
+        result = self.sub("--ble-channels", "relay_09", variant="esp32-8x-relay")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("relay_09", result.stderr)
+
+    def test_a_repeated_channel_is_rejected(self):
+        result = self.sub("--ble-channels", "relay_03,relay_03")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("twice", result.stderr)

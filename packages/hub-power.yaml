@@ -24,11 +24,17 @@
 #
 # Hub power refuses a plain MQTT `set false` (packages/relay-channel*.yaml): its only way off is
 # Winter mode. Hub wake (packages/ble-wake.yaml) switches it on and resets the stage to none.
+#
+# A Hub wake (or `set true`) during the countdown cancels nothing: the Pi has already halted or is
+# halting, and a halted Pi boots only when its power comes back. The wake is queued instead: the
+# cut happens on time, and `winter_wake_gap` later Hub power comes back on and the stage is none.
 
 substitutions:
   # `hub_power` itself is declared in packages/base.yaml (Driver info reads it too).
   # Long enough for the Pi to halt cleanly (Docker included); firmware-only, never on the wire.
   winter_cut_delay: 90s
+  # Off long enough for the Pi's supply to drain, so it boots again (a queued wake, above).
+  winter_wake_gap: 5s
 
 globals:
   # 0 none, 1 counting, 2 cut. Restored across reboot and OTA.
@@ -36,6 +42,11 @@ globals:
     type: int
     restore_value: true
     initial_value: "0"
+  # A Hub wake taken during the countdown: Hub power comes back on right after the cut. RAM only:
+  # after a reboot mid-countdown the cut stands, and the next Hub wake ends it.
+  - id: winter_wake_queued
+    type: bool
+    initial_value: "false"
 
 script:
   # Stores the stage and commits it to flash now: the globals component saves a changed value on
@@ -67,13 +78,34 @@ script:
           ESP_LOGW("winter", "cutting Hub power");
           id(winter_store).execute(2);
           hub->turn_off();
+      - if:
+          condition:
+            lambda: "return id(winter_wake_queued);"
+          then:
+            - delay: ${winter_wake_gap}
+            - lambda: |-
+                ESP_LOGI("winter", "queued Hub wake: Hub power back on");
+                id(winter_wake_queued) = false;
+                ${('id(relay_' ~ hub_power ~ ').turn_on();') if hub_power else ''}
+            - script.execute:
+                id: winter_store
+                stage: 0
+            - script.execute: publish_winter_mode
 
-  # Back to none: Hub wake, or Hub power switched on over the bus.
+  # Back to none: Hub wake, or Hub power switched on over the bus. During the countdown the cut
+  # still happens (the Pi is halting): the wake is queued and runs right after it.
   - id: winter_clear
     then:
       - if:
           condition:
-            lambda: "return id(winter_stage) != 0;"
+            lambda: "return id(winter_stage) == 1;"
+          then:
+            - lambda: |-
+                ESP_LOGW("winter", "Hub wake during the countdown: queued after the cut");
+                id(winter_wake_queued) = true;
+      - if:
+          condition:
+            lambda: "return id(winter_stage) == 2;"
           then:
             - lambda: 'ESP_LOGI("winter", "Winter mode over");'
             - script.stop: winter_cut

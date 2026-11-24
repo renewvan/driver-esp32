@@ -1,39 +1,54 @@
-# BLE wake (Hub wake, renewvan/hub docs/adr/0034): switch Hub power ON over Bluetooth, with no WiFi,
-# router or hub.
+# The relay board's Bluetooth (renewvan/hub docs/adr/0034): Hub wake and Direct control, with no
+# WiFi, router or hub. The client is the Renewvan mobile app; the message format lives transport-free
+# in renewvan/apps `@renewvan/core/boardBle`.
 #
-# Use case: the van is in Winter mode (packages/hub-power.yaml), the hub (Raspberry Pi) and router
-# powered down through this board's Hub power relay. The board itself stays powered, and its owner,
-# standing near the van, powers the hub back on from the Renewvan phone app.
+#   Hub wake        switch Hub power ON (packages/hub-power.yaml): the van is in Winter mode, the hub
+#                   (Raspberry Pi and router) powered down through this board, and its owner, near the
+#                   van, powers it back on. A wake ends Winter mode (during the countdown it is queued
+#                   until the cut, see packages/hub-power.yaml).
+#   Direct control  switch the channels listed in `ble_channels` (secrets/<board>.yaml, none by
+#                   default, never Hub power) on or off. The app uses it only while the Renewvan bus is
+#                   unreachable; the board publishes every change to the bus as usual (each channel's
+#                   own `on_state`, packages/relay-channel*.yaml) once it is connected again.
 #
-# Included once, by a relay variant, after packages/relay-channel.yaml and packages/hub-power.yaml:
+# Included once, by a relay variant, after packages/relay-channel*.yaml and packages/hub-power.yaml:
 #   ble_wake: !include ../packages/ble-wake.yaml
-# The channel is the board's Hub power (the `hub_power` substitution, from secrets/<board>.yaml). On
-# a board without Hub power the service is still advertised but refuses every write (`denied`).
-# A wake ends Winter mode: the stage goes back to none (packages/hub-power.yaml).
 #
-# This is deliberately a NARROW second control path, an exception to the "no local control" rule
-# in the header of firmware/esp32-16x-relay.yaml, and it is bounded:
-#   * it can only turn Hub power ON. There is no BLE "off": cutting the hub's power is Winter mode,
-#     a shutdown the hub finishes before this board cuts it (packages/hub-power.yaml), because a
-#     hard cut risks the Pi's SD card;
-#   * every write must carry the shared secret `ble_wake_secret` (secrets/<board>.yaml), compared
-#     in constant time; three wrong secrets in a row lock the command for 60 seconds;
-#   * the state still reaches the bus: the channel's own `on_state` (packages/relay-channel.yaml)
-#     publishes it, exactly as for an MQTT `set`.
-# The secret is a deterrent, not cryptography: a BLE write is plaintext on the air and can be
-# replayed by someone who sniffs it. The only effect of a replay is powering the owner's own hub.
+# This is deliberately a NARROW second control path, an exception to the "no local control" rule in
+# the header of firmware/esp32-16x-relay.yaml, and it is bounded:
+#   * Hub power accepts only ON: cutting the hub's power is Winter mode, a shutdown the hub finishes
+#     before this board cuts it, because a hard cut risks the Pi's SD card;
+#   * only the channels compiled in as `ble_channels` accept anything else;
+#   * every command is challenge-response: the board offers a single-use random nonce and accepts a
+#     command only with HMAC-SHA256(secret, "<nonce>|<channel nn>|<on|off>"), so a sniffed command
+#     cannot be replayed (the nonce is gone) or edited (the MAC covers it). The secret,
+#     `ble_wake_secret` in secrets/<board>.yaml, never goes on the air. Three bad commands in a row
+#     lock commands for 60 seconds.
 #
-# GATT layout (UUIDs are the wire contract with the phone app; a challenge-response replaces this
-# plaintext command next, driver-esp32#27):
-#   service        7e1a0001-6f6e-4f3a-9c10-52656e657776
-#   command  (W)   7e1a0002-...   UTF-8 text  "<secret>|on"   (split at the LAST '|')
-#   status (R, N)  7e1a0003-...   UTF-8 text  "on" | "off"   (the relay's state, not a write's verdict)
-#   result (R, N)  7e1a0004-...   UTF-8 text  "ok" | "denied" | "locked"   (the verdict on the LAST write)
-#
-# The result exists because the status cannot tell a right secret from a wrong one when the relay is
-# already on, and a refused BLE write gets no error back. It is notified (not just stored) after
-# EVERY write, even when it equals the previous one, so a phone subscribes first, writes, and waits
-# for the notification. It is "" until the first write after boot.
+# GATT layout, the wire contract with the app (UTF-8 text; UUIDs 7e1a00XX-6f6e-4f3a-9c10-52656e657776).
+# Every readable value is at most 22 bytes: ESPHome answers a read with at most 22 bytes and only a
+# link at the default MTU asks for the rest, so a longer value arrives cut on a phone.
+#   service        7e1a0001
+#   board    (R)   7e1a0007  the board's name: Driver key `esp32-<board>`, relay ids `<board>-<nn>`.
+#   channels (R)   7e1a0006  "<Hub power nn or empty>|<Direct control mask>", e.g. "01|000c": the mask is 4
+#                            hex characters, bit nn-1 set for each Direct control channel. Fixed per firmware.
+#   nonce    (R)   7e1a0005  16 lowercase hex characters (8 random bytes). Replaced on every connect and
+#                            after EVERY command write, whatever its result; older than 60 s it is stale.
+#                            Empty until the first connect after boot.
+#   command  (W)   7e1a0002  "<nonce>|<nn>|<on|off>|<mac>", mac = lowercase hex HMAC-SHA256(key = the
+#                            secret's bytes, message = the first three fields as written). 88 bytes: the
+#                            phone negotiates a larger MTU or does a long (prepared) write.
+#   states (R, N)  7e1a0003  4 hex characters, bit nn-1 set while channel nn is on, for Hub power and the
+#                            Direct control channels only (every other bit 0). Notified on change.
+#   result (R, N)  7e1a0004  the verdict on the LAST command write, notified after every write:
+#                            ok | stale (not the current nonce, or expired: read a new one and retry)
+#                               | denied (bad MAC or malformed; counts toward the lockout)
+#                               | refused (authentic but not allowed: an unlisted channel, or off on Hub power)
+#                               | locked
+#                            Empty until the first write after boot. A refused BLE write gets no error
+#                            back, so a phone subscribes first, writes, and waits for this notification.
+# The board advertises its Driver key (`esp32-<board>`) as its BLE name, cut to ESPHome's 20 characters;
+# `board` carries the name whole.
 #
 # Needs `ble_wake_secret` in secrets/<board>.yaml. WiFi and BLE share the ESP32's one radio: WiFi
 # keeps retrying while the router is off, which slows BLE. A winter-mode that stops WiFi is left
@@ -41,37 +56,85 @@
 
 substitutions:
   ble_wake_secret: !secret ble_wake_secret
+  # Derived from the build's `hub_power` and `ble_channels`: Hub power's channel number, and the
+  # Direct control switches and channel numbers as C++ initializer lists ending in nullptr (which also
+  # keeps ESPHome's Jinja from reading a quoted list as a Python tuple).
+  ble_hub_nn: "${hub_power[6:] if hub_power else ''}"
+  ble_direct_switches: "${('id(relay_' ~ (ble_channels | replace(',', '), id(relay_')) ~ '), ') if ble_channels else ''}nullptr"
+  ble_direct_nns: '${(''"'' ~ (ble_channels | replace(''relay_'', '''') | replace('','', ''", "'')) ~ ''", '') if ble_channels else ''''}nullptr'
 
 globals:
-  - id: ble_wake_failures
+  - id: ble_nonce
+    type: std::string
+    initial_value: '""'
+  - id: ble_nonce_at
+    type: uint32_t
+    initial_value: "0"
+  - id: ble_failures
     type: int
     initial_value: "0"
-  - id: ble_wake_locked_until
+  - id: ble_locked_until
     type: uint32_t
     initial_value: "0"
 
-# The name a phone's scan list shows. ESPHome limits a BLE name to 20 characters and fails the build
-# on a longer explicit one, while a board name may be 16, so the Jinja slice cuts `renewvan-<board>`
-# to fit: boards sharing their first 11 characters look alike in a scan (the node name, the hostname
-# and the bus identity stay whole).
+script:
+  # A fresh single-use nonce, from the hardware RNG (true random while the radio is on).
+  - id: ble_new_nonce
+    then:
+      - lambda: |-
+          uint8_t bytes[8];
+          random_bytes(bytes, sizeof(bytes));
+          id(ble_nonce) = format_hex(bytes, sizeof(bytes));
+          id(ble_nonce_at) = millis();
+          const std::string &n = id(ble_nonce);
+          id(ble_nonce_value)->set_value(std::vector<uint8_t>(n.begin(), n.end()));
+
+# The name a phone's scan list shows: the Driver key, cut to ESPHome's 20-character limit (a board
+# name may be 16 characters, the key 22); `info` carries it whole.
 esp32_ble:
-  name: "${('renewvan-' ~ board)[:20]}"
+  name: "${driver[:20]}"
+
+hmac_sha256:
 
 esp32_ble_server:
   manufacturer: Renewvan
+  on_connect:
+    - script.execute: ble_new_nonce
   services:
     - uuid: 7e1a0001-6f6e-4f3a-9c10-52656e657776
       advertise: true
       characteristics:
-        # Listed first: the command's on_write uses it, and ESPHome resolves an id only once its
+        - id: ble_board
+          uuid: 7e1a0007-6f6e-4f3a-9c10-52656e657776
+          read: true
+          write: false
+          value: "${board}"
+        # Set once by the interval below (the mask is computed from the switch table).
+        - id: ble_channels_value
+          uuid: 7e1a0006-6f6e-4f3a-9c10-52656e657776
+          read: true
+          write: false
+          value: ""
+        - id: ble_nonce_value
+          uuid: 7e1a0005-6f6e-4f3a-9c10-52656e657776
+          read: true
+          write: false
+          value: ""
+        - id: ble_states
+          uuid: 7e1a0003-6f6e-4f3a-9c10-52656e657776
+          read: true
+          write: false
+          notify: true
+          value: ""
+        # Listed before the command: its on_write uses it, and ESPHome resolves an id only once its
         # characteristic has been declared (listed after, the build fails "Circular dependency").
-        - id: ble_wake_result
+        - id: ble_result
           uuid: 7e1a0004-6f6e-4f3a-9c10-52656e657776
           read: true
           write: false
           notify: true
           value: ""
-        - id: ble_wake_command
+        - id: ble_command
           uuid: 7e1a0002-6f6e-4f3a-9c10-52656e657776
           read: false
           write: true
@@ -80,72 +143,131 @@ esp32_ble_server:
             then:
               - lambda: |-
                   const uint32_t now = millis();
+                  const std::string text(x.begin(), x.end());
+                  // ESPHome appends a long (prepared) write to the characteristic's current value:
+                  // clear it, so the next command starts empty.
+                  id(ble_command)->set_value(std::vector<uint8_t>{});
+                  // Every write uses up the nonce, whatever its result.
+                  const std::string nonce = id(ble_nonce);
+                  const uint32_t nonce_age = now - id(ble_nonce_at);
+                  id(ble_new_nonce).execute();
                   // Tell the phone how this write ended: stored for a read, notified for a subscriber.
                   auto verdict = [](const char *v) {
-                    id(ble_wake_result)->set_value(std::vector<uint8_t>(v, v + strlen(v)));
-                    id(ble_wake_result)->notify();
+                    id(ble_result)->set_value(std::vector<uint8_t>(v, v + strlen(v)));
+                    id(ble_result)->notify();
                   };
-                  if (id(ble_wake_locked_until) != 0 && (int32_t)(now - id(ble_wake_locked_until)) < 0) {
-                    ESP_LOGW("ble_wake", "locked, write ignored");
+                  auto denied = [&](const char *why) {
+                    ESP_LOGW("ble", "command denied: %s", why);
+                    if (++id(ble_failures) >= 3) {
+                      id(ble_failures) = 0;
+                      id(ble_locked_until) = now + 60000;
+                      ESP_LOGW("ble", "commands locked for 60 s");
+                    }
+                    verdict("denied");
+                  };
+                  if (id(ble_locked_until) != 0 && (int32_t) (now - id(ble_locked_until)) < 0) {
+                    ESP_LOGW("ble", "locked, command ignored");
                     verdict("locked");
                     return;
                   }
-                  const std::string text(x.begin(), x.end());
-                  const size_t bar = text.rfind('|');
-                  bool ok = false;
-                  if (bar != std::string::npos) {
-                    const std::string given = text.substr(0, bar);
-                    const std::string want = "${ble_wake_secret}";
-                    // Constant time over the secret's length: no early exit on the first wrong byte.
-                    uint8_t diff = given.size() != want.size();
-                    for (size_t i = 0; i < want.size(); i++) {
-                      diff |= (uint8_t) (i < given.size() ? given[i] : 0) ^ (uint8_t) want[i];
-                    }
-                    ok = diff == 0 && text.substr(bar + 1) == "on";
-                  }
-                  if (!ok) {
-                    ESP_LOGW("ble_wake", "rejected write");
-                    if (++id(ble_wake_failures) >= 3) {
-                      id(ble_wake_failures) = 0;
-                      id(ble_wake_locked_until) = now + 60000;
-                      ESP_LOGW("ble_wake", "locked for 60 s");
-                    }
-                    verdict("denied");
+                  // "<nonce>|<relay id>|<on|off>|<mac>": exactly four fields.
+                  const size_t a = text.find('|');
+                  const size_t b = a == std::string::npos ? a : text.find('|', a + 1);
+                  const size_t c = b == std::string::npos ? b : text.find('|', b + 1);
+                  if (c == std::string::npos || text.find('|', c + 1) != std::string::npos) {
+                    denied("malformed");
                     return;
                   }
+                  if (nonce.empty() || text.compare(0, a, nonce) != 0 || nonce_age > 60000) {
+                    // Not a forgery sign (the phone may hold an old nonce): no lockout count.
+                    ESP_LOGW("ble", "command stale: not the current nonce");
+                    verdict("stale");
+                    return;
+                  }
+                  hmac_sha256::HmacSHA256 hmac;
+                  const std::string secret = "${ble_wake_secret}";
+                  hmac.init(secret);
+                  hmac.add(text.data(), c);
+                  hmac.calculate();
+                  char want[65];
+                  hmac.get_hex(want);
+                  const std::string given = text.substr(c + 1);
+                  // Constant time over the digest: no early exit on the first wrong character.
+                  uint8_t diff = given.size() != 64;
+                  for (size_t i = 0; i < 64; i++) {
+                    diff |= (uint8_t) (i < given.size() ? given[i] : 0) ^ (uint8_t) want[i];
+                  }
+                  if (diff != 0) {
+                    denied("bad MAC");
+                    return;
+                  }
+                  id(ble_failures) = 0;
+                  const std::string nn = text.substr(a + 1, b - a - 1);
+                  const std::string action = text.substr(b + 1, c - b - 1);
+                  if (action != "on" && action != "off") {
+                    ESP_LOGW("ble", "%s: action '%s' refused", nn.c_str(), action.c_str());
+                    verdict("refused");
+                    return;
+                  }
+                  const bool on = action == "on";
+                  // Hub power: Hub wake only.
                   switch_::Switch *hub = ${('id(relay_' ~ hub_power ~ ')') if hub_power else 'nullptr'};
-                  if (hub == nullptr) {
-                    ESP_LOGW("ble_wake", "this board has no Hub power");
-                    verdict("denied");
+                  if (hub != nullptr && nn == "${ble_hub_nn}") {
+                    if (!on) {
+                      ESP_LOGW("ble", "channel %s is Hub power: off refused, use Winter mode", nn.c_str());
+                      verdict("refused");
+                      return;
+                    }
+                    ESP_LOGI("ble", "Hub wake");
+                    hub->turn_on();
+                    id(winter_clear).execute();
+                    verdict("ok");
                     return;
                   }
-                  id(ble_wake_failures) = 0;
-                  ESP_LOGI("ble_wake", "wake accepted");
-                  hub->turn_on();
-                  id(winter_clear).execute();
-                  verdict("ok");
-        - id: ble_wake_status
-          uuid: 7e1a0003-6f6e-4f3a-9c10-52656e657776
-          read: true
-          write: false
-          notify: true
-          value: "off"
+                  // Direct control: the listed channels only.
+                  switch_::Switch *const direct[] = {${ble_direct_switches}};
+                  const char *const direct_nn[] = {${ble_direct_nns}};
+                  for (size_t i = 0; direct[i] != nullptr; i++) {
+                    if (nn == direct_nn[i]) {
+                      ESP_LOGI("ble", "Direct control: channel %s %s", nn.c_str(), action.c_str());
+                      on ? direct[i]->turn_on() : direct[i]->turn_off();
+                      verdict("ok");
+                      return;
+                    }
+                  }
+                  ESP_LOGW("ble", "channel %s is not open to Direct control: refused", nn.c_str());
+                  verdict("refused");
 
-# Keep the status characteristic in step with Hub power, and notify a connected phone. An internal
-# template binary sensor that follows the switch, not an `on_state` merged into it: the status is a
-# BLE concern and packages/relay-channel.yaml stays as is. `off` on a board without Hub power.
-binary_sensor:
-  - platform: template
-    id: ble_wake_relay_state
-    internal: true
-    lambda: |-
-      switch_::Switch *hub = ${('id(relay_' ~ hub_power ~ ')') if hub_power else 'nullptr'};
-      return hub != nullptr && hub->state;
-    on_state:
-      - ble_server.characteristic.set_value:
-          id: ble_wake_status
-          value: !lambda |-
-            const char *s = x ? "on" : "off";
-            return std::vector<uint8_t>(s, s + strlen(s));
-      - ble_server.characteristic.notify:
-          id: ble_wake_status
+# Keep `states` in step with Hub power and the Direct control channels, and notify a connected phone
+# when it changes; on the first pass also set `channels`. Polled, not hooked into each switch:
+# packages/relay-channel*.yaml stays as is.
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          static int last = -1;  // never a real mask: the first pass always sets it
+          auto hex4 = [](unsigned mask) {
+            char out[5];
+            snprintf(out, sizeof(out), "%04x", mask & 0xffff);
+            return std::string(out);
+          };
+          auto bit = [](const char *nn) { return 1u << (atoi(nn) - 1); };
+          unsigned states = 0;
+          switch_::Switch *hub = ${('id(relay_' ~ hub_power ~ ')') if hub_power else 'nullptr'};
+          if (hub != nullptr && hub->state) states |= bit("${ble_hub_nn}");
+          switch_::Switch *const direct[] = {${ble_direct_switches}};
+          const char *const direct_nn[] = {${ble_direct_nns}};
+          unsigned listed = 0;
+          for (size_t i = 0; direct[i] != nullptr; i++) {
+            listed |= bit(direct_nn[i]);
+            if (direct[i]->state) states |= bit(direct_nn[i]);
+          }
+          if (last == -1) {
+            const std::string channels = std::string("${ble_hub_nn}") + "|" + hex4(listed);
+            id(ble_channels_value)->set_value(std::vector<uint8_t>(channels.begin(), channels.end()));
+          }
+          if ((int) states == last) return;
+          last = (int) states;
+          const std::string value = hex4(states);
+          id(ble_states)->set_value(std::vector<uint8_t>(value.begin(), value.end()));
+          id(ble_states)->notify();
